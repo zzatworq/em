@@ -1,0 +1,38 @@
+{
+  "url": "http://127.0.0.1:8080/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "Electricity Monitor",
+      "hasCanvas": false,
+      "bodyTextLen": 1311,
+      "bodyTextHash": "086460aa052d101d657f5d5b704c415b8c247e3bbc7c00d62a223645e3bd08a6",
+      "bodyTextPrefix": "Electricity Monitor Latest 08 Sept 2026, 7:18 am Summary Bill Hi",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "Electricity Monitor",
+      "hasCanvas": false,
+      "bodyTextLen": 1188,
+      "bodyTextHash": "d3fe8fdf132f1b120dee96c0f2ee27dc45d73a8589643eb4fc16e5fdeb3bdc58",
+      "bodyTextPrefix": "Electricity Monitor Latest 08 Sept 2026, 7:18 am Summary Bill Hi",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview-mobile.png"
+    }
+  },
+  "brandWarnings": [
+    "BRAND NOTE: no custom public/og.jpg — the platform will serve the og.grok.me placeholder. Custom cards are the default for games of every kind (DOM board/word games included), whimsical apps, creative tools, and brand-forward pages — only plain utilities (converters, CRUD trackers, admin dashboards) keep the placeholder. If this app is not a plain utility, finish the brand-asset pass per /workspace/.grok/skills/og/SKILL.md."
+  ],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-preview.json"
+}

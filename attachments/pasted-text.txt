@@ -1,0 +1,3838 @@
+const CONFIG = {
+  BILLING_DAY: 13,
+  BILLING_HOUR: 17,
+  BILLING_MINUTE: 0,
+  SOLAR_START_HOUR: 7,
+  SOLAR_START_MINUTE: 30,
+  SOLAR_END_HOUR: 17,
+  SOLAR_END_MINUTE: 30,
+  GOAL_COMBINED_UNITS: 100,
+  PRO_RATA_STANDARD_DAYS: 30,
+  DEFAULT_APP_FONT: "system-ui",
+  ESTIMATION_PROFILE_SOURCE: "13-Aug-2026 12:00 PM to 14-Aug-2026 12:00 PM",
+  ESTIMATION_PROFILE_KWH_PER_HOUR: [
+    0.1743431221,
+    0.1743431221,
+    0.1743431221,
+    0.1743431221,
+    0.1743431221,
+    0.1743431221,
+    0.1743431221,
+    0.0762589880,
+    0.0108695652,
+    0.0108695652,
+    0.0108695652,
+    0.0108695652,
+    0.0100000000,
+    0.0100000000,
+    0.0100000000,
+    0.0100000000,
+    0.0100000000,
+    0.0562500000,
+    0.1408928571,
+    0.2419340659,
+    0.1977546071,
+    0.1743431221,
+    0.1743431221,
+    0.1743431221
+  ],
+  REMINDER_HOUR: 16,
+  REMINDER_MINUTE: 30,
+  PROPERTY_SPREADSHEET_ID: "ELECTRICITY_SPREADSHEET_ID",
+  METER_1_NAME: "METER 1",
+  METER_2_NAME: "METER 2",
+  CONSUMER_TYPE: "Unprotected",
+  TARIFF_NAME: "A-1 Residential",
+  CONNECTION_TYPE: "Single Phase",
+  DEFAULT_TARIFF_EFFECTIVE: "06-Feb-2026",
+  DEFAULT_SLABS: [
+    {min: 1,   max: 100, rate: 37.50, fixed: 275},
+    {min: 101, max: 200, rate: 43.50, fixed: 300},
+    {min: 201, max: 300, rate: 33.10, fixed: 350},
+    {min: 301, max: 400, rate: 36.46, fixed: 400},
+    {min: 401, max: 500, rate: 38.95, fixed: 500},
+    {min: 501, max: 600, rate: 40.22, fixed: 675},
+    {min: 601, max: 700, rate: 41.85, fixed: 675},
+    {min: 701, max: Infinity, rate: 47.20, fixed: 675}
+  ],
+  DEFAULT_ADJUSTMENTS: {
+    FCA_PER_UNIT: 0,
+    QTA_PER_UNIT: 0,
+    FC_SURCHARGE_PER_UNIT: 0,
+    NJ_SURCHARGE_PER_UNIT: 0,
+    ELECTRICITY_DUTY_PERCENT: 1.5,
+    GST_PERCENT: 17,
+    TV_FEE: 35,
+    OTHER_FIXED: 0
+  }
+};
+let GENERAL_SETTINGS_CACHE = null;
+function initializeSystem() {
+  const ss = getSpreadsheet_();
+  ensureAppOwner_();
+  ensureSheet_(ss, "Readings");
+  ensureSheet_(ss, "Daily Summary");
+  ensureSheet_(ss, "Billing Summary");
+  ensureSheet_(ss, "Estimated Bill");
+  ensureTariffSettingsSheet_(ss);
+  ensureMeterSettingsSheet_(ss);
+  ensureEstimationProfileSheet_(ss);
+  ensureNotifySheet_(ss);
+  ensureNotesSheet_(ss);
+  ensureGeneralSettingsSheet_(ss);
+  ensureBillingHistorySheet_(ss);
+  ensureReadingCollectionsSheet_(ss);
+  removeObsoleteTriggers_();
+  ensureFormTrigger_(ss);
+  rebuildData();
+  return "Electricity Monitor initialized successfully.";
+}
+function ensureAppOwner_(){
+  const props=PropertiesService.getScriptProperties();
+  const key="APP_OWNER_EMAIL";
+  if(props.getProperty(key)) return;
+  let email="";
+  try{ email=String(Session.getEffectiveUser().getEmail()||"").trim().toLowerCase(); }catch(e){}
+  if(email) props.setProperty(key,email);
+}
+function isAppOwner_(){
+  const owner=String(PropertiesService.getScriptProperties().getProperty("APP_OWNER_EMAIL")||"").trim().toLowerCase();
+  let email="";
+  try{ email=String(Session.getActiveUser().getEmail()||"").trim().toLowerCase(); }catch(e){}
+  if(!owner || !email) return false;
+  return email===owner;
+}
+function requireAppOwner_(){
+  if(!isAppOwner_()) throw new Error("Only the app owner can edit or delete reading records.");
+}
+function removeObsoleteTriggers_() {
+  const obsolete = [
+    "upgradeTwoMeterSystem"
+  ];
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (obsolete.indexOf(t.getHandlerFunction()) !== -1) {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+}
+function processFormSubmission(e) {
+  rebuildData();
+}
+function ensureFormTrigger_(ss) {
+  const exists = ScriptApp.getProjectTriggers().some(function(t) {
+    return t.getHandlerFunction() === "processFormSubmission";
+  });
+  if (!exists) {
+    ScriptApp.newTrigger("processFormSubmission")
+      .forSpreadsheet(ss)
+      .onFormSubmit()
+      .create();
+  }
+}
+function installReminderTrigger() {
+  const exists = ScriptApp.getProjectTriggers().some(function(t) {
+    return t.getHandlerFunction() === "sendMissingReadingReminders";
+  });
+  if (!exists) {
+    ScriptApp.newTrigger("sendMissingReadingReminders")
+      .timeBased()
+      .everyDays(1)
+      .atHour(CONFIG.REMINDER_HOUR)
+      .nearMinute(CONFIG.REMINDER_MINUTE)
+      .create();
+  }
+}
+function rebuildData() {
+  const ss = getSpreadsheet_();
+  const responseSheet = findResponseSheet_(ss);
+  if (!responseSheet) return;
+  const readings = readFormResponses_(responseSheet);
+  readings.sort(function(a, b) {
+    return a.datetime - b.datetime;
+  });
+  applyCarryForward_(readings);
+  rebuildReadingsSheet_(ss, readings);
+  rebuildDailySummary_(ss, readings);
+  rebuildBillingSummary_(ss, readings);
+  rebuildEstimatedBillSheet_(ss, readings);
+}
+function readFormResponses_(sheet) {
+  const values = sheet.getDataRange().getValues();
+  if (values.length <= 1) return [];
+  const headers = values[0];
+  const dateIndex = findHeaderIndex_(headers, ["Reading Date"]);
+  const timeIndex = findHeaderIndex_(headers, ["Reading Time"]);
+  const newMeterIndex = findHeaderIndex_(headers, [
+    "New Meter Reading (kWh)",
+    "Meter Reading (kWh)"
+  ]);
+  const oldMeterIndex = findHeaderIndex_(headers, [
+    "Old Meter Reading (kWh)"
+  ]);
+  const notesIndex = findHeaderIndex_(headers, ["Notes"]);
+  if (dateIndex < 0 || timeIndex < 0) {
+    throw new Error("Reading Date or Reading Time column was not found.");
+  }
+  const result = [];
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    if (row[dateIndex] === "" || row[timeIndex] === "") continue;
+    const datetime = combineDateTime_(row[dateIndex], row[timeIndex]);
+    if (!datetime) continue;
+    let newReading = null;
+    let oldReading = null;
+    if (newMeterIndex >= 0) {
+      const v = row[newMeterIndex];
+      if (v !== "" && !isNaN(Number(v))) newReading = Number(v);
+    }
+    if (oldMeterIndex >= 0) {
+      const v = row[oldMeterIndex];
+      if (v !== "" && !isNaN(Number(v))) oldReading = Number(v);
+    }
+    result.push({
+      datetime: datetime,
+      newInput: newReading,
+      oldInput: oldReading,
+      newReading: null,
+      oldReading: null,
+      notes: notesIndex >= 0 ? row[notesIndex] : ""
+    });
+  }
+  return result;
+}
+function applyCarryForward_(readings) {
+  let lastNew = null;
+  let lastOld = null;
+  readings.forEach(function(r) {
+    if (r.newInput !== null) lastNew = r.newInput;
+    if (r.oldInput !== null) lastOld = r.oldInput;
+    r.newReading = lastNew;
+    r.oldReading = lastOld;
+  });
+}
+function flagRawDecrease_(readings) {
+  let lastNewInput = null;
+  let lastOldInput = null;
+  return readings.map(function(r) {
+    let flag = "";
+    if (r.newInput !== null) {
+      if (lastNewInput !== null && r.newInput < lastNewInput) {
+        flag += "Meter 1 reading decreased (check for a typo or meter change); ";
+      }
+      lastNewInput = r.newInput;
+    }
+    if (r.oldInput !== null) {
+      if (lastOldInput !== null && r.oldInput < lastOldInput) {
+        flag += "Meter 2 reading decreased (check for a typo or meter change); ";
+      }
+      lastOldInput = r.oldInput;
+    }
+    return flag;
+  });
+}
+function rebuildReadingsSheet_(ss, readings) {
+  const sheet = ensureSheet_(ss, "Readings");
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, 14).setValues([[
+    "Date",
+    "Time",
+    "Date & Time",
+    "New Meter Reading (kWh)",
+    "Old Meter Reading (kWh)",
+    "New Meter Difference (kWh)",
+    "Old Meter Difference (kWh)",
+    "Total Difference (kWh)",
+    "5 PM Day",
+    "Period",
+    "Billing Month",
+    "New Meter Status",
+    "Old Meter Status",
+    "Anomaly"
+  ]]);
+  styleHeader_(sheet, 14);
+  if (!readings.length) return;
+  const anomalyFlags = flagRawDecrease_(readings);
+  const output = [];
+  for (let i = 0; i < readings.length; i++) {
+    const r = readings[i];
+    let newDiff = "";
+    let oldDiff = "";
+    if (i > 0) {
+      const previous = readings[i - 1];
+      if (r.newReading !== null && previous.newReading !== null) {
+        newDiff = r.newReading - previous.newReading;
+      }
+      if (r.oldReading !== null && previous.oldReading !== null) {
+        oldDiff = r.oldReading - previous.oldReading;
+      }
+    }
+    let totalDiff = "";
+    if (newDiff !== "" || oldDiff !== "") {
+      totalDiff =
+        (newDiff === "" ? 0 : newDiff) +
+        (oldDiff === "" ? 0 : oldDiff);
+    }
+    output.push([
+      r.datetime,
+      r.datetime,
+      r.datetime,
+      r.newReading === null ? "" : r.newReading,
+      r.oldReading === null ? "" : r.oldReading,
+      newDiff,
+      oldDiff,
+      totalDiff,
+      formatFivePmDay_(r.datetime),
+      isSolarPeriod_(r.datetime) ? "Solar/Daytime" : "Grid Period",
+      getBillingMonth_(r.datetime),
+      r.newInput === null ? "Unchanged/blank" : "Entered",
+      r.oldInput === null ? "Unchanged/blank" : "Entered",
+      anomalyFlags[i]
+    ]);
+  }
+  sheet.getRange(2, 1, output.length, 14).setValues(output);
+  sheet.getRange(2, 1, output.length, 1).setNumberFormat("dd/mm/yyyy");
+  sheet.getRange(2, 2, output.length, 2).setNumberFormat("hh:mm AM/PM");
+  sheet.getRange(2, 4, output.length, 5).setNumberFormat("0.00");
+  sheet.autoResizeColumns(1, 14);
+  sheet.setFrozenRows(1);
+}
+function rebuildDailySummary_(ss, readings) {
+  const sheet = ensureSheet_(ss, "Daily Summary");
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, 9).setValues([[
+    "5 PM Day",
+    "Period Start",
+    "Period End",
+    "New Meter Consumption (kWh)",
+    "Old Meter Consumption (kWh)",
+    "Total Consumption (kWh)",
+    "New Meter Reading at End",
+    "Old Meter Reading at End",
+    "Data Status"
+  ]]);
+  styleHeader_(sheet, 9);
+  if (!readings.length) return;
+  let day = getFivePmDayStart_(readings[0].datetime);
+  const lastDay = getFivePmDayStart_(readings[readings.length - 1].datetime);
+  const now = new Date();
+  const output = [];
+  while (day <= lastDay) {
+    const start = new Date(day);
+    const end = new Date(day);
+    end.setDate(end.getDate() + 1);
+    const startR = interpolatedReadingsAt_(readings, start);
+    const endR = now >= end
+      ? interpolatedReadingsAt_(readings, end)
+      : readingsAtOrBefore_(readings, now);
+    const newConsumption =
+      calculateDifference_(startR.newReading, endR.newReading);
+    const oldConsumption =
+      calculateDifference_(startR.oldReading, endR.oldReading);
+    const total = sumKnown_(newConsumption, oldConsumption);
+    let status = "Complete";
+    if (newConsumption === "" || oldConsumption === "") {
+      status = "One meter has no baseline reading yet";
+    }
+    output.push([
+      new Date(day),
+      start,
+      end,
+      newConsumption,
+      oldConsumption,
+      total,
+      endR.newReading === null ? "" : endR.newReading,
+      endR.oldReading === null ? "" : endR.oldReading,
+      status
+    ]);
+    day.setDate(day.getDate() + 1);
+  }
+  sheet.getRange(2, 1, output.length, 9).setValues(output);
+  sheet.getRange(2, 1, output.length, 3)
+    .setNumberFormat("dd/mm/yyyy hh:mm AM/PM");
+  sheet.getRange(2, 4, output.length, 5).setNumberFormat("0.00");
+  sheet.autoResizeColumns(1, 9);
+  sheet.setFrozenRows(1);
+}
+function rebuildBillingSummary_(ss, readings) {
+  const sheet = ensureSheet_(ss, "Billing Summary");
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, 13).setValues([[
+    "Billing Month",
+    "Period Start",
+    "Period End",
+    "Meter 1 Total (kWh)",
+    "Meter 2 Total (kWh)",
+    "Combined Total (kWh)",
+    "Elapsed Days",
+    "Meter 1 Daily Average",
+    "Meter 2 Daily Average",
+    "Combined Daily Average",
+    "Meter 1 Projected",
+    "Meter 2 Projected",
+    "Combined Projected"
+  ]]);
+  styleHeader_(sheet, 13);
+  if (!readings.length) return;
+  const periods = {};
+  readings.forEach(function(r) {
+    const start = getBillingPeriodStart_(r.datetime);
+    periods[start.getTime()] = {
+      start: start,
+      end: addMonth_(start)
+    };
+  });
+  const keys = Object.keys(periods)
+    .map(Number)
+    .sort(function(a, b) { return a - b; });
+  const output = [];
+  keys.forEach(function(key) {
+    const p = periods[key];
+    const startR = interpolatedReadingsAt_(readings, p.start);
+    const endR = interpolatedReadingsAt_(readings, p.end);
+    const meter1 = calculateDifference_(startR.newReading, endR.newReading);
+    const meter2 = calculateDifference_(startR.oldReading, endR.oldReading);
+    const combined = sumKnown_(meter1, meter2);
+    const periodReadings = readings.filter(function(r) {
+      return r.datetime >= p.start && r.datetime < p.end;
+    });
+    const meterChange = estimateMeterChangeEvent_(readings, p.start, p.end);
+    const meter1Days = meterOperatingDays_(readings, p.start, p.end, "new", meterChange);
+    const meter2Days = meterOperatingDays_(readings, p.start, p.end, "old", meterChange);
+    const avg1 = meter1Days > 0 && meter1 !== "" ? meter1 / meter1Days : "";
+    const avg2 = meter2Days > 0 && meter2 !== "" ? meter2 / meter2Days : "";
+    let elapsedDays = "";
+    if (periodReadings.length >= 2) {
+      elapsedDays =
+        (periodReadings[periodReadings.length - 1].datetime -
+         periodReadings[0].datetime) / 86400000;
+    }
+    const avgTotal = elapsedDays > 0 && combined !== "" ? combined / elapsedDays : "";
+    const fullDays = (p.end - p.start) / 86400000;
+    output.push([
+      formatBillingMonth_(p.end),
+      p.start,
+      p.end,
+      meter1,
+      meter2,
+      combined,
+      elapsedDays,
+      avg1,
+      avg2,
+      avgTotal,
+      avg1 === "" ? "" : avg1 * fullDays,
+      avg2 === "" ? "" : avg2 * fullDays,
+      avgTotal === "" ? "" : avgTotal * fullDays
+    ]);
+  });
+  if (!output.length) return;
+  sheet.getRange(2, 1, output.length, 13).setValues(output);
+  sheet.getRange(2, 2, output.length, 2)
+    .setNumberFormat("dd/mm/yyyy hh:mm AM/PM");
+  sheet.getRange(2, 4, output.length, 10).setNumberFormat("0.00");
+  sheet.autoResizeColumns(1, 13);
+  sheet.setFrozenRows(1);
+}
+function ensureEstimationProfileSheet_(ss) {
+  const sheet = ensureSheet_(ss, "Estimation Profile");
+  sheet.clearContents();
+  sheet.getRange("A1:D1").setValues([[
+    "Hour",
+    "Reference kWh/hour",
+    "Source",
+    "Use"
+  ]]);
+  styleHeader_(sheet, 4);
+  const rows = CONFIG.ESTIMATION_PROFILE_KWH_PER_HOUR.map(function(v, h) {
+    return [
+      Utilities.formatString("%02d:00", h),
+      v,
+      CONFIG.ESTIMATION_PROFILE_SOURCE,
+      "Gap/interpolation estimates only"
+    ];
+  });
+  sheet.getRange(2, 1, rows.length, 4).setValues(rows);
+  sheet.getRange(2, 2, rows.length, 1).setNumberFormat("0.0000");
+  sheet.getRange("A27").setValue(
+    "These values are derived from the supplied 13-Aug-2026 to 14-Aug-2026 reading sequence. Actual meter readings always override estimates."
+  );
+  sheet.getRange("A27:D27").merge();
+  sheet.getRange("A27").setWrap(true);
+  sheet.autoResizeColumns(1, 4);
+  sheet.setFrozenRows(1);
+}
+function ensureTariffSettingsSheet_(ss) {
+  let sheet = ss.getSheetByName("Tariff Settings");
+  if (!sheet) {
+    sheet = ss.insertSheet("Tariff Settings");
+  }
+  if (sheet.getLastRow() === 0) {
+    writeDefaultTariffSettings_(sheet);
+  } else {
+    const values = sheet.getDataRange().getValues();
+    const requestedDefaults = {
+      "0-100 Rate": 37.50,
+      "100-200 Rate": 43.50
+    };
+    const oldDefaults = {
+      "0-100 Rate": [22.44],
+      "100-200 Rate": [28.91],
+      "1-100 Rate": [22.44],
+      "101-200 Rate": [28.91]
+    };
+    for (let i = 1; i < values.length; i++) {
+      const key = String(values[i][0] || '').trim();
+      if ((key === "1-100 Rate" || key === "101-200 Rate") &&
+          oldDefaults[key].indexOf(Number(values[i][1])) !== -1) {
+        const newKey = key === "1-100 Rate" ? "0-100 Rate" : "100-200 Rate";
+        sheet.getRange(i + 1, 1).setValue(newKey);
+        sheet.getRange(i + 1, 2).setValue(
+          key === "1-100 Rate" ? 37.50 : 43.50
+        );
+      } else if (requestedDefaults.hasOwnProperty(key) &&
+                 oldDefaults[key].indexOf(Number(values[i][1])) !== -1) {
+        sheet.getRange(i + 1, 2).setValue(requestedDefaults[key]);
+      }
+    }
+  }
+  return sheet;
+}
+function writeDefaultTariffSettings_(sheet) {
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, 4).setValues([[
+    "Setting",
+    "Value",
+    "Unit",
+    "Description"
+  ]]);
+  styleHeader_(sheet, 4);
+  const rows = [
+    ["Effective From", CONFIG.DEFAULT_TARIFF_EFFECTIVE, "", "Initial tariff reference"],
+    ["Consumer Type", CONFIG.CONSUMER_TYPE, "", "Both meters are treated as unprotected"],
+    ["Tariff", CONFIG.TARIFF_NAME, "", "Residential A-1"],
+    ["Connection Type", CONFIG.CONNECTION_TYPE, "", "Change if the connection differs"],
+    ["Slab Mode", "ALL_UNITS_AT_APPLICABLE_RATE", "", "Use the applicable non-protected slab rate for all units"],
+    ["", "", "", ""],
+    ["0-100 Rate", 37.50, "Rs/kWh", "Non-protected residential"],
+    ["100-200 Rate", 43.50, "Rs/kWh", "Non-protected residential"],
+    ["201-300 Rate", 33.10, "Rs/kWh", "Non-protected residential"],
+    ["301-400 Rate", 36.46, "Rs/kWh", "Non-protected residential"],
+    ["401-500 Rate", 38.95, "Rs/kWh", "Non-protected residential"],
+    ["501-600 Rate", 40.22, "Rs/kWh", "Non-protected residential"],
+    ["601-700 Rate", 41.85, "Rs/kWh", "Non-protected residential"],
+    ["Above 700 Rate", 47.20, "Rs/kWh", "Non-protected residential"],
+    ["", "", "", ""],
+    ["0-100 Fixed", 275, "Rs/month", "Fixed charge"],
+    ["100-200 Fixed", 300, "Rs/month", "Fixed charge"],
+    ["201-300 Fixed", 350, "Rs/month", "Fixed charge"],
+    ["301-400 Fixed", 400, "Rs/month", "Fixed charge"],
+    ["401-500 Fixed", 500, "Rs/month", "Fixed charge"],
+    ["501-600 Fixed", 675, "Rs/month", "Fixed charge"],
+    ["601-700 Fixed", 675, "Rs/month", "Fixed charge"],
+    ["Above 700 Fixed", 675, "Rs/month", "Fixed charge"],
+    ["", "", "", ""],
+    ["FCA", 0, "Rs/kWh", "Monthly adjustment — update when applicable"],
+    ["QTA", 0, "Rs/kWh", "Quarterly adjustment — update when applicable"],
+    ["FC Surcharge", 0, "Rs/kWh", "Update when applicable"],
+    ["NJ Surcharge", 0, "Rs/kWh", "Update when applicable"],
+    ["Electricity Duty", 1.5, "%", "Applied to configured taxable base"],
+    ["GST", 17, "%", "Applied to configured taxable base"],
+    ["TV Fee", 35, "Rs/month", "Residential TV fee where applicable"],
+    ["Other Fixed", 0, "Rs/month", "Other manually entered fixed amount"]
+  ];
+  sheet.getRange(2, 1, rows.length, 4).setValues(rows);
+  sheet.getRange(2, 2, rows.length, 1).setNumberFormat("0.00");
+  sheet.autoResizeColumns(1, 4);
+  sheet.setFrozenRows(1);
+  sheet.getRange("A2:D5").setBackground("#eef4fb");
+  sheet.getRange("A7:D14").setBackground("#f7f7f7");
+  sheet.getRange("A16:D23").setBackground("#f7f7f7");
+  sheet.getRange("A25:D32").setBackground("#fff8e6");
+}
+function ensureMeterSettingsSheet_(ss) {
+  let sheet = ss.getSheetByName("Meter Settings");
+  if (!sheet) sheet = ss.insertSheet("Meter Settings");
+  if (sheet.getLastRow() === 0) {
+    const common = getTariffSettings_();
+    const rows = [["Meter","Setting","Value","Unit","Description"]];
+    ["METER 1","METER 2"].forEach(function(meter){
+      rows.push([meter,"Effective From",common.effectiveFrom,"","Tariff effective date for this meter."]);
+      rows.push([meter,"Consumer Type",common.consumerType,"","Protected or Unprotected."]);
+      rows.push([meter,"Tariff",common.tariff,"","Tariff category for this meter."]);
+      rows.push([meter,"Connection Type",common.connectionType,"","Single Phase or Three Phase."]);
+      rows.push([meter,"Slab Mode",common.slabMode,"","ALL_UNITS_AT_APPLICABLE_RATE or PROGRESSIVE."]);
+      common.slabs.forEach(function(sl){
+        const label=sl.max===Infinity?"Above 700":sl.min+"-"+sl.max;
+        rows.push([meter,label+" Rate",sl.rate,"Rs/kWh","Energy rate for this slab."]);
+        rows.push([meter,label+" Fixed",sl.fixed,"Rs/month","Fixed charge for this slab."]);
+      });
+      const labels={FCA:"FCA",QTA:"QTA",FC:"FC Surcharge",NJ:"NJ Surcharge",ED:"Electricity Duty",GST:"GST",TV:"TV Fee",OtherFixed:"Other Fixed"};
+      const units={FCA:"Rs/kWh",QTA:"Rs/kWh",FC:"Rs/kWh",NJ:"Rs/kWh",ED:"%",GST:"%",TV:"Rs/month",OtherFixed:"Rs/month"};
+      Object.keys(common.adjustments).forEach(function(k){rows.push([meter,labels[k]||k,common.adjustments[k],units[k]||"","Bill adjustment."]);});
+      rows.push([meter,"Protected 0-100 Rate",10.54,"Rs/kWh","2026 protected residential applicable variable charge."]);
+      rows.push([meter,"Protected 100-200 Rate",13.01,"Rs/kWh","2026 protected residential applicable variable charge."]);
+      rows.push([meter,"Protected 0-100 Fixed",200,"Rs/month","2026 protected fixed charge."]);
+      rows.push([meter,"Protected 100-200 Fixed",300,"Rs/month","2026 protected fixed charge."]);
+    });
+    sheet.getRange(1,1,rows.length,5).setValues(rows);
+    styleHeader_(sheet,5);
+  }
+  return sheet;
+}
+function getMeterTariffSettings_() {
+  const sheet=ensureMeterSettingsSheet_(getSpreadsheet_());
+  const values=sheet.getDataRange().getValues();
+  const map={"METER 1":{},"METER 2":{}};
+  for(let i=1;i<values.length;i++){
+    const meter=String(values[i][0]||"").trim(), key=String(values[i][1]||"").trim();
+    if(map[meter] && key) map[meter][key]=values[i][2];
+  }
+  function make(meter){
+    const x=map[meter], n=function(k,d){return x[k]!==""&&x[k]!==null&&!isNaN(Number(x[k]))?Number(x[k]):d;};
+    return {
+      effectiveFrom:x["Effective From"]||CONFIG.DEFAULT_TARIFF_EFFECTIVE,
+      consumerType:x["Consumer Type"]||"Unprotected",
+      tariff:x["Tariff"]||CONFIG.TARIFF_NAME,
+      connectionType:x["Connection Type"]||CONFIG.CONNECTION_TYPE,
+      slabMode:x["Slab Mode"]||"ALL_UNITS_AT_APPLICABLE_RATE",
+      slabs:[
+        {min:1,max:100,rate:n("0-100 Rate",37.5),fixed:n("0-100 Fixed",275)},
+        {min:101,max:200,rate:n("100-200 Rate",43.5),fixed:n("100-200 Fixed",300)},
+        {min:201,max:300,rate:n("201-300 Rate",33.1),fixed:n("201-300 Fixed",350)},
+        {min:301,max:400,rate:n("301-400 Rate",36.46),fixed:n("301-400 Fixed",400)},
+        {min:401,max:500,rate:n("401-500 Rate",38.95),fixed:n("401-500 Fixed",500)},
+        {min:501,max:600,rate:n("501-600 Rate",40.22),fixed:n("501-600 Fixed",675)},
+        {min:601,max:700,rate:n("601-700 Rate",41.85),fixed:n("601-700 Fixed",675)},
+        {min:701,max:Infinity,rate:n("Above 700 Rate",47.2),fixed:n("Above 700 Fixed",675)}
+      ],
+      protectedSlabs:[
+        {min:1,max:100,rate:n("Protected 0-100 Rate",10.54),fixed:n("Protected 0-100 Fixed",200)},
+        {min:101,max:200,rate:n("Protected 100-200 Rate",13.01),fixed:n("Protected 100-200 Fixed",300)}
+      ],
+      adjustments:{FCA:n("FCA",0),QTA:n("QTA",0),FC:n("FC Surcharge",0),NJ:n("NJ Surcharge",0),ED:n("Electricity Duty",1.5),GST:n("GST",17),TV:n("TV Fee",35),OtherFixed:n("Other Fixed",0)}
+    };
+  }
+  return {meter1:make("METER 1"),meter2:make("METER 2")};
+}
+function saveMeterSettingsFromClient(values){
+  if(!values || typeof values!=="object") throw new Error("No meter settings supplied.");
+  const sheet=ensureMeterSettingsSheet_(getSpreadsheet_()), data=sheet.getDataRange().getValues();
+  for(let i=1;i<data.length;i++){
+    const meter=String(data[i][0]||""), key=String(data[i][1]||"");
+    if(values[meter] && Object.prototype.hasOwnProperty.call(values[meter],key)){
+      const raw=values[meter][key];
+      const numeric=/Rate$|Fixed$|^FCA$|^QTA$|Surcharge$|^Electricity Duty$|^GST$|^TV Fee$|^Other Fixed$/.test(key);
+      sheet.getRange(i+1,3).setValue(numeric && raw!==""&&!isNaN(Number(raw))?Number(raw):raw);
+    }
+  }
+  rebuildData();
+  return {success:true};
+}
+function getTariffSettings_() {
+  const sheet = ensureTariffSettingsSheet_(getSpreadsheet_());
+  const values = sheet.getDataRange().getValues();
+  const map = {};
+  for (let i = 1; i < values.length; i++) {
+    const key = String(values[i][0] || "").trim();
+    if (key) map[key] = values[i][1];
+  }
+  return {
+    effectiveFrom: map["Effective From"] || CONFIG.DEFAULT_TARIFF_EFFECTIVE,
+    consumerType: map["Consumer Type"] || CONFIG.CONSUMER_TYPE,
+    tariff: map["Tariff"] || CONFIG.TARIFF_NAME,
+    connectionType: map["Connection Type"] || CONFIG.CONNECTION_TYPE,
+    slabMode: map["Slab Mode"] || "ALL_UNITS_AT_APPLICABLE_RATE",
+    slabs: [
+      {min: 1,   max: 100, rate: n_(map["0-100 Rate"], 37.50), fixed: n_(map["0-100 Fixed"], 275)},
+      {min: 101, max: 200, rate: n_(map["100-200 Rate"], 43.50), fixed: n_(map["100-200 Fixed"], 300)},
+      {min: 201, max: 300, rate: n_(map["201-300 Rate"], 33.10), fixed: n_(map["201-300 Fixed"], 350)},
+      {min: 301, max: 400, rate: n_(map["301-400 Rate"], 36.46), fixed: n_(map["301-400 Fixed"], 400)},
+      {min: 401, max: 500, rate: n_(map["401-500 Rate"], 38.95), fixed: n_(map["401-500 Fixed"], 500)},
+      {min: 501, max: 600, rate: n_(map["501-600 Rate"], 40.22), fixed: n_(map["501-600 Fixed"], 675)},
+      {min: 601, max: 700, rate: n_(map["601-700 Rate"], 41.85), fixed: n_(map["601-700 Fixed"], 675)},
+      {min: 701, max: Infinity, rate: n_(map["Above 700 Rate"], 47.20), fixed: n_(map["Above 700 Fixed"], 675)}
+    ],
+    adjustments: {
+      FCA: n_(map["FCA"], 0),
+      QTA: n_(map["QTA"], 0),
+      FC: n_(map["FC Surcharge"], 0),
+      NJ: n_(map["NJ Surcharge"], 0),
+      ED: n_(map["Electricity Duty"], 1.5),
+      GST: n_(map["GST"], 17),
+      TV: n_(map["TV Fee"], 35),
+      OtherFixed: n_(map["Other Fixed"], 0)
+    }
+  };
+}
+function n_(value, fallback) {
+  if (value === "" || value === null || typeof value === "undefined") {
+    return fallback;
+  }
+  const x = Number(value);
+  return isNaN(x) ? fallback : x;
+}
+function calculateMeterBill_(units, tariff) {
+  units = Number(units || 0);
+  if (units < 0) units = 0;
+  if (units === 0) {
+    return {
+      units: 0, slab: "No consumption", rate: 0, energy: 0, fixed: 0,
+      adjustments: 0, duty: 0, gst: 0, tv: 0, otherFixed: 0, total: 0,
+      steps: [{label:"Consumption", formula:"0 kWh", amount:0}]
+    };
+  }
+  const activeSlabs = tariff.consumerType === "Protected" ? tariff.protectedSlabs : tariff.slabs;
+  if (!activeSlabs || !activeSlabs.length) throw new Error("No tariff slabs configured for " + tariff.consumerType + ".");
+  let slab = activeSlabs[activeSlabs.length - 1];
+  for (let i = 0; i < activeSlabs.length; i++) {
+    if (units >= activeSlabs[i].min && units <= activeSlabs[i].max) {
+      slab = activeSlabs[i];
+      break;
+    }
+  }
+  const steps = [];
+  let energy = 0;
+  if (tariff.slabMode === "PROGRESSIVE") {
+    let remaining = units;
+    activeSlabs.forEach(function(s) {
+      if (remaining <= 0) return;
+      const width = s.max === Infinity
+        ? remaining
+        : Math.min(remaining, Math.max(0, s.max - s.min + 1));
+      if (width <= 0) return;
+      const amount = width * s.rate;
+      energy += amount;
+      steps.push({
+        label: "Energy — " + slabLabel_(s),
+        formula: fmtUnits_(width) + " × Rs " + fmtMoney_(s.rate) + " = Rs " + fmtMoney_(amount),
+        amount: amount
+      });
+      remaining -= width;
+    });
+  } else {
+    energy = units * slab.rate;
+    steps.push({
+      label: "Energy charges — applicable slab " + slabLabel_(slab),
+      formula: fmtUnits_(units) + " × Rs " + fmtMoney_(slab.rate) + " = Rs " + fmtMoney_(energy),
+      amount: energy
+    });
+  }
+  const fixed = slab.fixed;
+  steps.push({
+    label: "Fixed charge",
+    formula: "Applicable slab fixed charge = Rs " + fmtMoney_(fixed),
+    amount: fixed
+  });
+  const perUnitAdjustments =
+    tariff.adjustments.FCA + tariff.adjustments.QTA +
+    tariff.adjustments.FC + tariff.adjustments.NJ;
+  const adjustmentAmount = units * perUnitAdjustments;
+  if (perUnitAdjustments !== 0) {
+    steps.push({
+      label: "Per-unit adjustments",
+      formula: fmtUnits_(units) + " × Rs " + fmtMoney_(perUnitAdjustments) +
+        " = Rs " + fmtMoney_(adjustmentAmount),
+      amount: adjustmentAmount
+    });
+  }
+  const otherFixed = tariff.adjustments.OtherFixed;
+  if (otherFixed !== 0) {
+    steps.push({
+      label: "Other fixed",
+      formula: "Rs " + fmtMoney_(otherFixed),
+      amount: otherFixed
+    });
+  }
+  const taxableBase = energy + fixed + adjustmentAmount + otherFixed;
+  const duty = taxableBase * tariff.adjustments.ED / 100;
+  const gst = (taxableBase + duty) * tariff.adjustments.GST / 100;
+  const tv = tariff.adjustments.TV;
+  if (tariff.adjustments.ED !== 0) {
+    steps.push({
+      label: "Electricity duty",
+      formula: "(" + fmtMoney_(taxableBase) + ") × " + fmtMoney_(tariff.adjustments.ED) +
+        "% = Rs " + fmtMoney_(duty),
+      amount: duty
+    });
+  }
+  if (tariff.adjustments.GST !== 0) {
+    steps.push({
+      label: "GST",
+      formula: "(" + fmtMoney_(taxableBase + duty) + ") × " + fmtMoney_(tariff.adjustments.GST) +
+        "% = Rs " + fmtMoney_(gst),
+      amount: gst
+    });
+  }
+  if (tv !== 0) {
+    steps.push({
+      label: "TV fee",
+      formula: "Rs " + fmtMoney_(tv),
+      amount: tv
+    });
+  }
+  const total = energy + fixed + adjustmentAmount + duty + gst + tv + otherFixed;
+  steps.push({
+    label: "Estimated bill",
+    formula: "All charges above = Rs " + fmtMoney_(total),
+    amount: total,
+    total: true
+  });
+  return {
+    units: units,
+    slab: slabLabel_(slab),
+    rate: slab.rate,
+    energy: energy,
+    fixed: fixed,
+    adjustments: adjustmentAmount,
+    duty: duty,
+    gst: gst,
+    tv: tv,
+    otherFixed: otherFixed,
+    total: total,
+    steps: steps
+  };
+}
+function fmtMoney_(value) {
+  return Number(value || 0).toFixed(2);
+}
+function fmtUnits_(value) {
+  return Number(value || 0).toFixed(2).replace(/\.00$/, "");
+}
+function slabLabel_(slab) {
+  if (slab.max === Infinity) return "Above 700";
+  return slab.min + "-" + slab.max;
+}
+function rebuildEstimatedBillSheet_(ss, readings) {
+  const sheet = ensureSheet_(ss, "Estimated Bill");
+  sheet.clearContents();
+  sheet.getRange("A1:F1").merge();
+  sheet.getRange("A1")
+    .setValue("ESTIMATED MEPCO BILL")
+    .setFontSize(16)
+    .setFontWeight("bold")
+    .setHorizontalAlignment("center");
+  if (!readings.length) {
+    sheet.getRange("A3").setValue("No meter readings yet.");
+    return;
+  }
+  const data = calculateDashboardNumbers_(readings);
+  const tariff = getTariffSettings_();
+  const current1 = calculateMeterBill_(data.billingNew || 0, tariff);
+  const current2 = calculateMeterBill_(data.billingOld || 0, tariff);
+  const projected1 = calculateMeterBill_(data.projectedNew || 0, tariff);
+  const projected2 = calculateMeterBill_(data.projectedOld || 0, tariff);
+  sheet.getRange("A3:F3").setValues([[
+    "Billing consumption",
+    CONFIG.METER_1_NAME,
+    CONFIG.METER_2_NAME,
+    "Combined",
+    "",
+    ""
+  ]]).setFontWeight("bold");
+  sheet.getRange("A4:D4").setValues([[
+    "Current units",
+    data.billingNew,
+    data.billingOld,
+    data.billingTotal
+  ]]);
+  sheet.getRange("A6:D6").setValues([[
+    "CURRENT BILL ESTIMATE",
+    "Meter 1",
+    "Meter 2",
+    "Total"
+  ]]).setFontWeight("bold");
+  writeBillRows_(sheet, 7, current1, current2);
+  const currentTotal =
+    current1.total + current2.total;
+  sheet.getRange("A16:D16").setValues([[
+    "ESTIMATED CURRENT BILL",
+    current1.total,
+    current2.total,
+    currentTotal
+  ]]).setFontWeight("bold");
+  sheet.getRange("A18:D18").setValues([[
+    "PROJECTED BILL",
+    "Meter 1",
+    "Meter 2",
+    "Total"
+  ]]).setFontWeight("bold");
+  sheet.getRange("A19:D19").setValues([[
+    "Projected units",
+    data.projectedNew,
+    data.projectedOld,
+    data.projectedTotal
+  ]]);
+  writeBillRows_(sheet, 20, projected1, projected2);
+  const projectedTotal =
+    projected1.total + projected2.total;
+  sheet.getRange("A29:D29").setValues([[
+    "PROJECTED BILL",
+    projected1.total,
+    projected2.total,
+    projectedTotal
+  ]]).setFontWeight("bold");
+  sheet.getRange("A32:D36").setValues([
+    ["Tariff effective from", tariff.effectiveFrom, "", ""],
+    ["Consumer type", tariff.consumerType, "", ""],
+    ["Tariff", tariff.tariff, "", ""],
+    ["Connection type", tariff.connectionType, "", ""],
+    ["Slab mode", tariff.slabMode, "", ""]
+  ]);
+  sheet.getRange("B4:D4").setNumberFormat("0.00");
+  sheet.getRange("B7:D16").setNumberFormat("0.00");
+  sheet.getRange("B19:D29").setNumberFormat("0.00");
+  sheet.autoResizeColumns(1, 6);
+  sheet.setFrozenRows(2);
+}
+function writeBillRows_(sheet, startRow, b1, b2) {
+  const rows = [
+    ["Units", b1.units, b2.units, b1.units + b2.units],
+    ["Applicable slab", b1.slab, b2.slab, ""],
+    ["Rate", b1.rate, b2.rate, ""],
+    ["Energy charges", b1.energy, b2.energy, b1.energy + b2.energy],
+    ["Fixed charges", b1.fixed, b2.fixed, b1.fixed + b2.fixed],
+    ["Adjustments", b1.adjustments, b2.adjustments, b1.adjustments + b2.adjustments],
+    ["Electricity duty", b1.duty, b2.duty, b1.duty + b2.duty],
+    ["GST", b1.gst, b2.gst, b1.gst + b2.gst],
+    ["TV fee", b1.tv, b2.tv, b1.tv + b2.tv],
+    ["Other fixed", b1.otherFixed, b2.otherFixed, b1.otherFixed + b2.otherFixed]
+  ];
+  sheet.getRange(startRow, 1, rows.length, 4).setValues(rows);
+}
+function getTariffSettingsForClient(){
+  const sheet=ensureMeterSettingsSheet_(getSpreadsheet_()), values=sheet.getDataRange().getValues(), meters={};
+  for(let i=1;i<values.length;i++){
+    const meter=String(values[i][0]||"");
+    if(!meter) continue;
+    if(!meters[meter]) meters[meter]=[];
+    if(values[i][1]) meters[meter].push({key:String(values[i][1]),value:values[i][2]===null?"":String(values[i][2]),unit:values[i][3]===null?"":String(values[i][3]),description:values[i][4]===null?"":String(values[i][4])});
+  }
+  return {meters:meters};
+}
+function saveTariffSettingsFromClient(values){
+  if(!values || typeof values !== 'object') throw new Error('No tariff values supplied.');
+  const sheet = ensureTariffSettingsSheet_(getSpreadsheet_());
+  const range = sheet.getDataRange();
+  const data = range.getValues();
+  for(let i=1;i<data.length;i++){
+    const key = String(data[i][0] || '').trim();
+    if(!key || !(key in values)) continue;
+    const raw = values[key];
+    const numericKeys = /Rate$|Fixed$|^FCA$|^QTA$|Surcharge$|Duty$|^GST$|^TV Fee$|^Other Fixed$/.test(key);
+    const value = numericKeys && raw !== '' && !isNaN(Number(raw)) ? Number(raw) : raw;
+    sheet.getRange(i+1,2).setValue(value);
+  }
+  rebuildData();
+  return {success:true};
+}
+function doGet() {
+  ensureAppOwner_();
+  return HtmlService
+    .createHtmlOutput(getDashboardHTML_())
+    .setTitle("Electricity Monitor")
+    .setFaviconUrl("https://i.postimg.cc/tgdWRHCX/electric-meter.png")
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+function getAssumed5050Bill(selectedBillingMonth) {
+  const data = getPageData(selectedBillingMonth);
+  if(data.error || !data.dashboard) return data;
+  const d = data.dashboard;
+  const units = d.isCurrentBillingMonth ? Number(d.projectedTotal||0) : Number(d.billingTotal||0);
+  const half = units / 2;
+  const tariffs = getMeterTariffSettings_();
+  const meter1 = calculateMeterBill_(half, tariffs.meter1);
+  const meter2 = calculateMeterBill_(half, tariffs.meter2);
+  return {meter1:meter1,meter2:meter2,total:(meter1.total||0)+(meter2.total||0),units:units};
+}
+function getHourlyChartForDay(dayKey){
+  if(dayKey === "last24") return getHourlyChartLast24();
+  const readings=readFormResponses_(findResponseSheet_(getSpreadsheet_()));
+  readings.sort(function(a,b){return a.datetime-b.datetime;});
+  applyCarryForward_(readings);
+  const dayStart=new Date(dayKey+"T17:00:00");
+  const dayEnd=new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate()+1);
+  const now=new Date();
+  const latest=readings.length?readings[readings.length-1].datetime:null;
+  let effectiveEnd=dayEnd;
+  if(now>=dayStart && now<dayEnd){
+    effectiveEnd=latest && latest<now ? latest : now;
+  } else if(latest && latest<dayEnd && latest>=dayStart){
+    effectiveEnd=latest;
+  }
+  return getHourlyChartData_(readings,dayStart,effectiveEnd);
+}
+function getHourlyChartLast24(){
+  const readings=readFormResponses_(findResponseSheet_(getSpreadsheet_()));
+  readings.sort(function(a,b){return a.datetime-b.datetime;});
+  applyCarryForward_(readings);
+  return getLast24HoursHourlyData_(readings, new Date());
+}
+function getPageData(selectedBillingMonth) {
+  ensureAppOwner_();
+  const ss = getSpreadsheet_();
+  const responseSheet = findResponseSheet_(ss);
+  if (!responseSheet) return {error: "No Form response sheet found."};
+  const readings = readFormResponses_(responseSheet);
+  readings.sort(function(a,b){ return a.datetime - b.datetime; });
+  applyCarryForward_(readings);
+  if (!readings.length) {
+    return {
+      dashboard:{empty:true,message:"No meter readings yet. Add one on the Add Reading tab."},
+      records:getRecordsForClient_(),
+      notify:getNotifyEmails_(),
+      notes:getNotesForClient_(),
+      billingMonths:[],
+      isOwner:isAppOwner_(),
+      billingHistory: getBillingHistory_(),
+      readingCollections: getReadingCollections_()
+    };
+  }
+  const months = getAvailableBillingMonths_(readings);
+  const currentStart = getBillingPeriodStart_(new Date());
+  let selectedStart = currentStart;
+  if (selectedBillingMonth) {
+    const candidate = new Date(Number(selectedBillingMonth));
+    if (!isNaN(candidate.getTime())) {
+      const allowed = months.some(function(m){ return m.key === billingMonthKey_(candidate); });
+      if (allowed) selectedStart = candidate;
+    }
+  }
+  return {
+    dashboard: calculateDashboardNumbers_(readings, selectedStart),
+    records: getRecordsForClient_(),
+    notify: getNotifyEmails_(),
+    notes: getNotesForClient_(),
+    billingMonths: months,
+    isOwner:isAppOwner_(),
+    billingHistory: getBillingHistory_(),
+    readingCollections: getReadingCollections_()
+  };
+}
+function getDashboardData(selectedBillingMonth) {
+  const page = getPageData(selectedBillingMonth);
+  return page.dashboard;
+}
+function billingMonthKey_(date) {
+  return Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd");
+}
+function getAvailableBillingMonths_(readings) {
+  const map = {};
+  const currentStart = getBillingPeriodStart_(new Date());
+  map[billingMonthKey_(currentStart)] = currentStart;
+  readings.forEach(function(r){
+    const start = getBillingPeriodStart_(r.datetime);
+    map[billingMonthKey_(start)] = start;
+  });
+  return Object.keys(map).map(function(key){
+    const start = map[key];
+    const end = addMonth_(start);
+    return {key:key,value:String(start.getTime()),label:formatBillingMonth_(end)};
+  }).sort(function(a,b){ return Number(b.value)-Number(a.value); });
+}
+function estimateMeterChangeEvent_(readings, periodStart, periodEnd) {
+  const candidates=readings.filter(function(r){
+    return r.datetime>=periodStart && r.datetime<periodEnd &&
+      r.newInput!==null && r.oldInput!==null;
+  });
+  if(!candidates.length) return null;
+  let event=candidates[candidates.length-1];
+  let previousSameDay=null;
+  const eventDayStart=getFivePmDayStart_(event.datetime);
+  for(let i=0;i<readings.length;i++){
+    const r=readings[i];
+    if(r.datetime>=eventDayStart && r.datetime<event.datetime) {
+      if(r.newInput!==null || r.oldInput!==null) previousSameDay=r;
+    }
+  }
+  const dayStart=new Date(eventDayStart);
+  const dayEnd=new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate()+1);
+  let estimated;
+  if(previousSameDay) {
+    estimated=new Date(
+      previousSameDay.datetime.getTime()+
+      (event.datetime.getTime()-previousSameDay.datetime.getTime())/2
+    );
+  } else {
+    estimated=new Date(
+      dayStart.getTime()+
+      (event.datetime.getTime()-dayStart.getTime())/2
+    );
+  }
+  estimated=new Date(Math.max(
+    dayStart.getTime(),
+    Math.min(dayEnd.getTime(),estimated.getTime())
+  ));
+  const dayProgress=(estimated-dayStart)/(dayEnd-dayStart)*100;
+  const monthProgress=(estimated-periodStart)/(periodEnd-periodStart)*100;
+  let activeAfter = "new";
+  for (let i = 0; i < readings.length; i++) {
+    const r = readings[i];
+    if (r.datetime > event.datetime) {
+      if (r.newInput !== null && r.oldInput === null) {
+        activeAfter = "new";
+        break;
+      }
+      if (r.oldInput !== null && r.newInput === null) {
+        activeAfter = "old";
+        break;
+      }
+    }
+  }
+  return {
+    observedAt:event.datetime,
+    estimatedAt:estimated,
+    dayStart:dayStart,
+    dayProgress:Math.max(0,Math.min(100,dayProgress)),
+    monthProgress:Math.max(0,Math.min(100,monthProgress)),
+    activeAfter:activeAfter
+  };
+}
+function calculateProRata_(baseline,present,extendedDays,standardDays){
+  if(baseline===null || present===null || baseline==="" || present==="") return null;
+  const actual=Number(present)-Number(baseline);
+  // Extended days are rounded to a whole day for billing math (e.g. 32.80 → 33).
+  const days=Math.round(Number(extendedDays||0));
+  const standard=Math.round(Number(standardDays||0));
+  if(!isFinite(actual) || !isFinite(days) || !isFinite(standard) || days<=0 || standard<=0 || actual<0) return null;
+  const daily=actual/days;
+  const billed=Math.floor(daily*standard);
+  return {
+    baseline:Number(baseline),present:Number(present),extendedDays:days,
+    actualUnits:actual,dailyAverage:daily,standardDays:standard,
+    billedUnits:billed,adjustedPresent:Number(baseline)+billed,
+    carryForward:actual-billed
+  };
+}
+
+/*
+ * Length in days of the billing period that *ends* at periodEnd
+ * (same clock time one month earlier → periodEnd). Varies 28–31.
+ */
+function billingPeriodLengthDays_(periodEnd) {
+  if (!periodEnd || isNaN(periodEnd.getTime())) return 30;
+  const start = new Date(
+    periodEnd.getFullYear(),
+    periodEnd.getMonth() - 1,
+    periodEnd.getDate(),
+    periodEnd.getHours(),
+    periodEnd.getMinutes(),
+    periodEnd.getSeconds(),
+    periodEnd.getMilliseconds()
+  );
+  const days = (periodEnd.getTime() - start.getTime()) / 86400000;
+  return days > 0 ? days : 30;
+}
+
+/*
+ * Map a collection month label ("Sep 2026") to the billing-period end
+ * boundary (billing day/hour of that month).
+ */
+function periodEndFromMonthLabel_(label) {
+  const raw = String(label || "").trim();
+  const m = raw.match(/^([A-Za-z]{3})\s+(\d{4})$/);
+  if (!m) return null;
+  const map = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+  const mi = map[m[1].toLowerCase()];
+  if (mi === undefined) return null;
+  const year = Number(m[2]);
+  const gs = getGeneralSettings_();
+  return new Date(year, mi, gs.billingDay, gs.billingHour, gs.billingMinute, 0, 0);
+}
+
+/*
+ * Standard (billable) days for a collection: calendar length of the
+ * billing period that collection closes. Prefer month label; fall back
+ * to the period boundary inferred from the collection timestamp.
+ */
+
+function defaultExtendedDaysForCollection_(collectionDate, monthLabel) {
+  const periodEnd = periodEndFromMonthLabel_(monthLabel) || getBillingPeriodStart_(collectionDate);
+  const periodStart = new Date(
+    periodEnd.getFullYear(),
+    periodEnd.getMonth() - 1,
+    periodEnd.getDate(),
+    periodEnd.getHours(),
+    periodEnd.getMinutes(),
+    0,
+    0
+  );
+  const days = (collectionDate.getTime() - periodStart.getTime()) / 86400000;
+  if (isFinite(days) && days > 0) return Math.round(days);
+  return Math.round(billingPeriodLengthDays_(periodEnd));
+}
+
+function standardDaysForCollection_(collection) {
+  if (!collection) return 30;
+  const fromLabel = periodEndFromMonthLabel_(collection.month);
+  if (fromLabel) return billingPeriodLengthDays_(fromLabel);
+  const timePart = collection.time && String(collection.time).length ? collection.time : "00:00";
+  const dt = new Date(collection.date + "T" + timePart + ":00");
+  if (isNaN(dt.getTime())) return 30;
+  // Collection near/after the cycle point closes the period ending at
+  // getBillingPeriodStart_(dt) when that start is on/before the collection.
+  const boundary = getBillingPeriodStart_(dt);
+  return billingPeriodLengthDays_(boundary);
+}
+
+function proRataForMeter_(baseline,present,extendedDays,standardDays){
+  const std = standardDays != null && standardDays !== ""
+    ? Number(standardDays)
+    : billingPeriodLengthDays_(getBillingPeriodStart_(new Date()));
+  return calculateProRata_(baseline,present,extendedDays,std);
+}
+function getLatestPriorCollection_(meter, boundaryDate) {
+  const collections = getReadingCollections_();
+  if (!collections.length) return null;
+  const priorMonthLabel = String(formatBillingMonth_(boundaryDate) || "").trim().toLowerCase();
+  let byLabel = null;
+  let byLabelDt = null;
+  let byGrace = null;
+  let byGraceDt = null;
+  const GRACE_MS = 12 * 86400000;
+  const graceEnd = new Date(boundaryDate.getTime() + GRACE_MS);
+  const graceStart = new Date(boundaryDate.getTime() - 40 * 86400000);
+  collections.forEach(function(c) {
+    if (String(c.meter || "").trim() !== String(meter || "").trim()) return;
+    const timePart = c.time && String(c.time).length ? c.time : "00:00";
+    const dt = new Date(c.date + "T" + timePart + ":00");
+    if (isNaN(dt.getTime())) return;
+    const monthLabel = String(c.month || "").trim().toLowerCase();
+    if (priorMonthLabel && monthLabel === priorMonthLabel) {
+      if (!byLabelDt || dt > byLabelDt) {
+        byLabelDt = dt;
+        byLabel = c;
+      }
+    }
+    if (dt >= graceStart && dt < graceEnd) {
+      if (!byGraceDt || dt > byGraceDt) {
+        byGraceDt = dt;
+        byGrace = c;
+      }
+    }
+  });
+  return byLabel || byGrace;
+}
+function carryForwardForMeter_(meter, boundaryDate, standardDays, readings) {
+  const c = getLatestPriorCollection_(meter, boundaryDate);
+  if (!c) return null;
+  const std = (standardDays != null && standardDays !== "" && Number(standardDays) > 0)
+    ? Number(standardDays)
+    : billingPeriodLengthDays_(boundaryDate);
+  const fromCollection = standardDaysForCollection_(c);
+  const useDays = fromCollection || std;
+
+  // Billed units always from official collection raw reading.
+  const billedProRata = calculateProRata_(
+    c.previousBaseline, c.rawReading, c.extendedDays, useDays
+  );
+  if (!billedProRata) return null;
+
+  // Carry-forward only: use live meter reading at the billing-period boundary
+  // (start of this month / end of the period just closed), not the later raw.
+  let boundaryReading = null;
+  if (readings && readings.length) {
+    const at = interpolatedReadingsAt_(readings, boundaryDate);
+    boundaryReading = meter === "METER 1" ? at.newReading : at.oldReading;
+  }
+
+  let carryForward = billedProRata.carryForward;
+  let carryPresent = billedProRata.present;
+  let carrySource = "collection";
+  if (boundaryReading !== null && boundaryReading !== "" && isFinite(Number(boundaryReading))) {
+    carryPresent = Number(boundaryReading);
+    // (reading at period start − baseline) − billed units
+    // equivalent to: boundaryReading − adjustedPresent
+    carryForward = carryPresent - billedProRata.adjustedPresent;
+    carrySource = "boundary";
+  }
+
+  return {
+    baseline: billedProRata.baseline,
+    present: billedProRata.present,
+    extendedDays: billedProRata.extendedDays,
+    actualUnits: billedProRata.actualUnits,
+    dailyAverage: billedProRata.dailyAverage,
+    standardDays: billedProRata.standardDays,
+    billedUnits: billedProRata.billedUnits,
+    adjustedPresent: billedProRata.adjustedPresent,
+    carryForward: carryForward,
+    boundaryReading: boundaryReading,
+    carryPresent: carryPresent,
+    carrySource: carrySource
+  };
+}
+function estimateReadingAt_(readings, target, meter) {
+  let before=null, after=null;
+  for(let i=0;i<readings.length;i++){
+    const r=readings[i];
+    if(r.datetime<=target && r[meter+'Reading']!==null) before=r;
+    if(r.datetime>target && r[meter+'Reading']!==null){ after=r; break; }
+  }
+  if(!before) return null;
+  if(before.datetime.getTime()===target.getTime()) return before[meter+'Reading'];
+  if(!after) return before[meter+'Reading'];
+  return profileWeightedInterpolate_(before,after,target,meter);
+}
+function last24HoursConsumption_(readings, endReading) {
+  if(!endReading) return {newMeter:'',oldMeter:'',total:''};
+  const end=endReading.datetime;
+  const start=new Date(end.getTime()-24*60*60*1000);
+  const newStart=estimateReadingAt_(readings,start,'new');
+  const oldStart=estimateReadingAt_(readings,start,'old');
+  const newEnd=endReading.newReading;
+  const oldEnd=endReading.oldReading;
+  const n=calculateDifference_(newStart,newEnd);
+  const o=calculateDifference_(oldStart,oldEnd);
+  return {newMeter:n,oldMeter:o,total:sumKnown_(n,o)};
+}
+function goalPaceMetrics_(currentUsage, billingStart, billingEnd, now) {
+  const goal = Number(getGeneralSettings_().goalCombinedUnits || 100);
+  const usage = Number(currentUsage || 0);
+  const totalDays = (billingEnd.getTime() - billingStart.getTime()) / 86400000;
+  const elapsedDays = Math.max(0, Math.min(totalDays, (now.getTime() - billingStart.getTime()) / 86400000));
+  const remainingDays = Math.max(0, totalDays - elapsedDays);
+  const remainingUnits = goal - usage;
+  const dailyAverage = elapsedDays > 0 ? usage / elapsedDays : 0;
+  const targetDailyAverage = totalDays > 0 ? goal / totalDays : 0;
+  let requiredDailyAverage = '';
+  if(remainingDays > 0 && remainingUnits > 0) {
+    requiredDailyAverage = remainingUnits / remainingDays;
+  }
+  const paceDifference = dailyAverage - targetDailyAverage;
+  return {
+    goal:goal, elapsedDays:elapsedDays, remainingDays:remainingDays,
+    remainingUnits:remainingUnits, dailyAverage:dailyAverage,
+    targetDailyAverage:targetDailyAverage, requiredDailyAverage:requiredDailyAverage,
+    paceDifference:paceDifference, achieved:usage <= goal && remainingDays === 0,
+    overGoal:remainingUnits < 0
+  };
+}
+function calculateDashboardNumbers_(readings, selectedStart) {
+  const now = new Date();
+  const currentStart = getBillingPeriodStart_(now);
+  const billingStart = selectedStart || currentStart;
+  const billingEnd = addMonth_(billingStart);
+  const isCurrent = billingStart.getTime() === currentStart.getTime();
+  const periodNow = isCurrent ? now : billingEnd;
+  const billingStartR = interpolatedReadingsAt_(readings, billingStart);
+  const billingEndR = isCurrent && now < billingEnd
+    ? readingsAtOrBefore_(readings, now)
+    : interpolatedReadingsAt_(readings, billingEnd);
+  const billingNew = calculateDifference_(billingStartR.newReading, billingEndR.newReading);
+  const billingOld = calculateDifference_(billingStartR.oldReading, billingEndR.oldReading);
+  const billingTotal = sumKnown_(billingNew, billingOld);
+  const periodReadings = readings.filter(function(r){
+    return r.datetime >= billingStart && r.datetime < billingEnd;
+  });
+  const fullPeriodDays = (billingEnd - billingStart) / 86400000;
+  let elapsedDays = isCurrent
+    ? Math.max(0, Math.min(fullPeriodDays, (periodNow - billingStart) / 86400000))
+    : fullPeriodDays;
+  const meterChange = estimateMeterChangeEvent_(readings, billingStart, billingEnd);
+  const meter1Days=meterOperatingDays_(readings,billingStart,periodNow,"new",meterChange);
+  const meter2Days=meterOperatingDays_(readings,billingStart,periodNow,"old",meterChange);
+  const averageNew = billingNew !== "" && meter1Days > 0 ? billingNew / meter1Days : "";
+  const averageOld = billingOld !== "" && meter2Days > 0 ? billingOld / meter2Days : "";
+  const averageTotal = billingTotal !== "" && elapsedDays > 0 ? billingTotal / elapsedDays : "";
+  const daily = getDailyChartData_(readings, billingStart, billingEnd, isCurrent ? now : billingEnd);
+  let projectedNew, projectedOld, projectedTotal;
+  if (isCurrent) {
+    const projection = projectBillingMonthFromDaily_(daily, billingStart, billingEnd, now, readings);
+    projectedNew = projection.newMeter;
+    projectedOld = projection.oldMeter;
+    projectedTotal = projection.total;
+  } else {
+    projectedNew = billingNew === "" ? 0 : Number(billingNew);
+    projectedOld = billingOld === "" ? 0 : Number(billingOld);
+    projectedTotal = projectedNew + projectedOld;
+  }
+  const projectedAverage = projectedTotal === "" ? "" : projectedTotal / fullPeriodDays;
+  const progress = isCurrent
+    ? Math.max(0, Math.min(100, ((now-billingStart)/(billingEnd-billingStart))*100))
+    : 100;
+  const meter1Share = billingTotal !== "" && billingTotal > 0 && billingNew !== "" ? billingNew / billingTotal * 100 : 0;
+  const meter2Share = billingTotal !== "" && billingTotal > 0 && billingOld !== "" ? billingOld / billingTotal * 100 : 0;
+  const meterTariffs = getMeterTariffSettings_();
+  const tariff1 = meterTariffs.meter1;
+  const tariff2 = meterTariffs.meter2;
+  const currentBill1 = billingNew === "" ? calculateMeterBill_(0, tariff1) : calculateMeterBill_(billingNew, tariff1);
+  const currentBill2 = billingOld === "" ? calculateMeterBill_(0, tariff2) : calculateMeterBill_(billingOld, tariff2);
+  const projectedBill1 = projectedNew === "" ? calculateMeterBill_(0, tariff1) : calculateMeterBill_(projectedNew, tariff1);
+  const projectedBill2 = projectedOld === "" ? calculateMeterBill_(0, tariff2) : calculateMeterBill_(projectedOld, tariff2);
+  const assumedUnits=isCurrent ? Number(projectedTotal||0) : Number(billingTotal||0);
+  const assumedHalf=assumedUnits/2;
+  const projected5050Meter1=calculateMeterBill_(assumedHalf,tariff1);
+  const projected5050Meter2=calculateMeterBill_(assumedHalf,tariff2);
+  const projected5050Total=(projected5050Meter1.total||0)+(projected5050Meter2.total||0);
+  const selectedReadings = periodReadings.length ? periodReadings : readings.filter(function(r){ return r.datetime >= billingStart && r.datetime <= billingEnd; });
+  const latest = selectedReadings.length ? selectedReadings[selectedReadings.length-1] : null;
+  const latestOverall = readings.length ? readings[readings.length-1] : null;
+  const currentNew = latest ? latest.newReading : null;
+  const currentOld = latest ? latest.oldReading : null;
+  const initialNew = billingStartR.newReading;
+  const initialOld = billingStartR.oldReading;
+  const currentTotal = (currentNew===null?0:currentNew)+(currentOld===null?0:currentOld);
+  const last24 = last24HoursConsumption_(readings, latest || latestOverall);
+  const gsForCarry = getGeneralSettings_();
+  const periodStandardDays = billingPeriodLengthDays_(billingStart);
+  const carrySource1 = carryForwardForMeter_("METER 1", billingStart, periodStandardDays, readings);
+  const carrySource2 = carryForwardForMeter_("METER 2", billingStart, periodStandardDays, readings);
+  const carryForwardNew = carrySource1 ? carrySource1.carryForward : 0;
+  const carryForwardOld = carrySource2 ? carrySource2.carryForward : 0;
+  const totalConsumptionNew = (billingNew === "" ? 0 : billingNew) + carryForwardNew;
+  const totalConsumptionOld = (billingOld === "" ? 0 : billingOld) + carryForwardOld;
+  const totalConsumptionCombined = totalConsumptionNew + totalConsumptionOld;
+  const goalPace = goalPaceMetrics_(totalConsumptionCombined, billingStart, billingEnd, isCurrent ? now : billingEnd);
+  const hourlyDays = daily.filter(function(d){
+    return d.total !== "" && d.total !== null && isFinite(Number(d.total));
+  });
+  const defaultHourlyDay = hourlyDays.length
+    ? hourlyDays[hourlyDays.length - 1].date
+    : Utilities.formatDate(billingStart, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  const defaultHourlyStart = new Date(defaultHourlyDay + "T17:00:00");
+  const hourlyDayOptions = hourlyDays.map(function(d){return {value:d.date,label:Utilities.formatDate(new Date(d.date + "T00:00:00"),Session.getScriptTimeZone(),"dd MMM yyyy")};});
+  if(isCurrent) hourlyDayOptions.unshift({value:"last24",label:"Last 24 Hours"});
+  const hourlyView = isCurrent ? "last24" : defaultHourlyDay;
+  const hourlyData = isCurrent ? getLast24HoursHourlyData_(readings, now) : getInitialHourlyData_(readings, defaultHourlyDay);
+  const billTotal = isCurrent
+    ? projected5050Total
+    : (currentBill1.total||0)+(currentBill2.total||0);
+  const billUnits = isCurrent ? projectedTotal : billingTotal;
+  const proRataNew=proRataForMeter_(initialNew,currentNew,meter1Days,periodStandardDays);
+  const proRataOld=proRataForMeter_(initialOld,currentOld,meter2Days,periodStandardDays);
+  const proRataTotalActual=sumKnown_(proRataNew ? proRataNew.actualUnits : "",proRataOld ? proRataOld.actualUnits : "");
+  const proRataTotalBilled=sumKnown_(proRataNew ? proRataNew.billedUnits : "",proRataOld ? proRataOld.billedUnits : "");
+  return {
+    latestDate: latest ? formatDateTime_(latest.datetime) : formatBillingMonth_(billingStart),
+    latestTimestamp: latest ? latest.datetime.getTime() : billingStart.getTime(),
+    currentNew:currentNew,currentOld:currentOld,currentTotal:currentTotal,initialNew:initialNew,initialOld:initialOld,
+    billingNew:billingNew,billingOld:billingOld,billingTotal:billingTotal,
+    elapsedDays:elapsedDays,meter1Days:meter1Days,meter2Days:meter2Days,
+    averageNew:averageNew,averageOld:averageOld,averageTotal:averageTotal,
+    last24New:last24.newMeter,last24Old:last24.oldMeter,last24Total:last24.total,
+    projectedNew:projectedNew,projectedOld:projectedOld,projectedTotal:projectedTotal,projectedAverage:projectedAverage,
+    meter1Share:meter1Share,meter2Share:meter2Share,
+    carryForwardNew:carryForwardNew,carryForwardOld:carryForwardOld,
+    totalConsumptionNew:totalConsumptionNew,totalConsumptionOld:totalConsumptionOld,
+    totalConsumptionCombined:totalConsumptionCombined,
+    carryForwardDetails:{meter1:carrySource1,meter2:carrySource2},
+    currentBillNew:currentBill1.total||0,currentBillOld:currentBill2.total||0,currentBillTotal:(currentBill1.total||0)+(currentBill2.total||0),
+    projectedBillNew:projectedBill1.total||0,projectedBillOld:projectedBill2.total||0,
+    projectedBillTotal:projected5050Total,
+    projectedBillActualDetails:{meter1:projectedBill1,meter2:projectedBill2},
+    projectedBillDetails:{meter1:projected5050Meter1,meter2:projected5050Meter2},
+    projectedBill5050Total:projected5050Total,
+    proRata:{meter1:proRataNew,meter2:proRataOld,totalActual:proRataTotalActual,totalBilled:proRataTotalBilled,standardDays:periodStandardDays},
+    currentBillDetails:{meter1:currentBill1,meter2:currentBill2},
+    effectiveCurrentRate: billUnits > 0 ? billTotal / billUnits : 0,
+    billingMonth:formatBillingMonth_(billingEnd),billingStart:formatDateTime_(billingStart),billingEnd:formatDateTime_(billingEnd),
+    billingProgress:progress,meterChangeEvent:meterChange?{observedAt:formatDateTime_(meterChange.observedAt),estimatedAt:formatDateTime_(meterChange.estimatedAt),dayProgress:meterChange.dayProgress,monthProgress:meterChange.monthProgress}:null,
+    goalUnits:getGeneralSettings_().goalCombinedUnits,
+    goalPace:goalPace,
+    fullPeriodDays:fullPeriodDays,daily:daily,
+    hourly:hourlyData,
+    hourlyDay:hourlyView,
+    hourlyDays:hourlyDayOptions,
+    isCurrentBillingMonth:isCurrent,
+    appFont:getGeneralSettings_().appFont,
+    availableMonthKey:billingMonthKey_(billingStart)
+  };
+}
+function meterOperatingDays_(readings,start,end,meter,meterChange){
+  if(end<=start) return 0;
+  if(meterChange && meterChange.estimatedAt){
+    const sw=meterChange.estimatedAt;
+    const activeAfter = meterChange.activeAfter || "new";
+    if(meter === activeAfter) return Math.max(0,(end-Math.max(start,sw))/86400000);
+    return Math.max(0,(Math.min(end,sw)-start)/86400000);
+  }
+  return meterDaysCovered_(readings,start,end,meter);
+}
+function meterDaysCovered_(readings, start, end, meter) {
+  const inputKey=meter==="new" ? "newInput" : "oldInput";
+  const relevant=readings.filter(function(r){
+    return r.datetime>=start && r.datetime<=end &&
+      r[inputKey]!==null && r[inputKey]!=="" && isFinite(Number(r[inputKey]));
+  });
+  if(relevant.length<2){
+    if(relevant.length===1){
+      return Math.max(0,(end.getTime()-relevant[0].datetime.getTime())/86400000);
+    }
+    return 0;
+  }
+  return (relevant[relevant.length-1].datetime-relevant[0].datetime)/86400000;
+}
+function profileWeightAt_(datetime) {
+  const profile = CONFIG.ESTIMATION_PROFILE_KWH_PER_HOUR;
+  const hour = datetime.getHours();
+  return Math.max(0.000001, Number(profile[hour] || 0));
+}
+function profileWeightBetween_(start, end) {
+  if (!start || !end || end <= start) return 0;
+  let total = 0;
+  let cursor = new Date(start);
+  while (cursor < end) {
+    const nextHour = new Date(cursor);
+    nextHour.setMinutes(0, 0, 0);
+    nextHour.setHours(nextHour.getHours() + 1);
+    const segmentEnd =
+      nextHour < end ? nextHour : end;
+    const minutes =
+      (segmentEnd - cursor) / 60000;
+    total += profileWeightAt_(cursor) * minutes;
+    cursor = segmentEnd;
+  }
+  return total;
+}
+function profileWeightedInterpolate_(before, after, target, meter) {
+  if (!before || !after) return null;
+  const b = before[meter + "Reading"];
+  const a = after[meter + "Reading"];
+  if (b === null || a === null) return null;
+  if (after.datetime <= before.datetime) return b;
+  if (a < b) return null;
+  const totalWeight =
+    profileWeightBetween_(before.datetime, after.datetime);
+  const targetWeight =
+    profileWeightBetween_(before.datetime, target);
+  if (totalWeight <= 0) {
+    const fraction =
+      (target - before.datetime) /
+      (after.datetime - before.datetime);
+    return b + (a - b) * fraction;
+  }
+  const fraction =
+    Math.max(0, Math.min(1, targetWeight / totalWeight));
+  return b + (a - b) * fraction;
+}
+function interpolatedReadingsAt_(readings, boundary) {
+  let before = null;
+  let after = null;
+  for (let i = 0; i < readings.length; i++) {
+    const r = readings[i];
+    if (r.datetime <= boundary) {
+      if (r.newReading !== null || r.oldReading !== null) {
+        before = r;
+      }
+    } else {
+      after = r;
+      break;
+    }
+  }
+  function interpolate(meter) {
+    const b =
+      before && before[meter + "Reading"] !== null
+        ? before
+        : null;
+    const a =
+      after && after[meter + "Reading"] !== null
+        ? after
+        : null;
+    if (!b) return null;
+    if (b.datetime.getTime() === boundary.getTime()) {
+      return b[meter + "Reading"];
+    }
+    if (a && a.datetime.getTime() === boundary.getTime()) {
+      return a[meter + "Reading"];
+    }
+    if (a && a.datetime > b.datetime) {
+      return profileWeightedInterpolate_(
+        b,
+        a,
+        boundary,
+        meter
+      );
+    }
+    return b[meter + "Reading"];
+  }
+  return {
+    newReading: interpolate("new"),
+    oldReading: interpolate("old")
+  };
+}
+const PRIOR_SHRINKAGE_DAYS = 3;
+function priorPeriodDailyAverages_(readings, billingStart) {
+  if (!readings.length || readings[0].datetime >= billingStart) return null;
+  const priorStart = new Date(
+    billingStart.getFullYear(), billingStart.getMonth() - 1, billingStart.getDate(),
+    billingStart.getHours(), billingStart.getMinutes(), 0, 0
+  );
+  const priorEnd = new Date(billingStart);
+  const days = (priorEnd - priorStart) / 86400000;
+  if (days <= 0) return null;
+  const startR = interpolatedReadingsAt_(readings, priorStart);
+  const endR = interpolatedReadingsAt_(readings, priorEnd);
+  const newTotal = calculateDifference_(startR.newReading, endR.newReading);
+  const oldTotal = calculateDifference_(startR.oldReading, endR.oldReading);
+  return {
+    newPerDay: newTotal === "" ? null : newTotal / days,
+    oldPerDay: oldTotal === "" ? null : oldTotal / days
+  };
+}
+function blendedDailyRate_(observedTotal, observedDays, priorPerDay) {
+  if (priorPerDay === null || typeof priorPerDay === "undefined") {
+    return observedDays > 0 ? observedTotal / observedDays : 0;
+  }
+  return (observedTotal + priorPerDay * PRIOR_SHRINKAGE_DAYS) /
+         (observedDays + PRIOR_SHRINKAGE_DAYS);
+}
+function projectBillingMonthFromDaily_(daily, billingStart, billingEnd, now, readings) {
+  const startKey = Utilities.formatDate(
+    billingStart,
+    Session.getScriptTimeZone(),
+    "yyyy-MM-dd"
+  );
+  const endKey = Utilities.formatDate(
+    billingEnd,
+    Session.getScriptTimeZone(),
+    "yyyy-MM-dd"
+  );
+  const periodDaily = daily.filter(function(d) {
+    return d.date >= startKey && d.date < endKey;
+  });
+  let completedNew = 0;
+  let completedOld = 0;
+  let completedDays = 0;
+  let currentDay = null;
+  periodDaily.forEach(function(d) {
+    if (d.completed) {
+      if (d.newMeter !== "") completedNew += Number(d.newMeter || 0);
+      if (d.oldMeter !== "") completedOld += Number(d.oldMeter || 0);
+      completedDays++;
+    } else {
+      currentDay = d;
+    }
+  });
+  const fullPeriodDays = (billingEnd - billingStart) / 86400000;
+  let partialFullNew = 0;
+  let partialFullOld = 0;
+  if (currentDay) {
+    const dayStart = getFivePmDayStart_(now);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+    const elapsedWeight = profileWeightBetween_(dayStart, now);
+    const fullWeight = profileWeightBetween_(dayStart, dayEnd);
+    const fraction = fullWeight > 0 ? elapsedWeight / fullWeight : 0;
+    const partialNew = currentDay.newMeter === "" ? 0 : Number(currentDay.newMeter || 0);
+    const partialOld = currentDay.oldMeter === "" ? 0 : Number(currentDay.oldMeter || 0);
+    const completedDailyNew = [];
+    const completedDailyOld = [];
+    periodDaily.forEach(function(d) {
+      if (!d.completed) return;
+      if (d.newMeter !== "" && isFinite(Number(d.newMeter))) completedDailyNew.push(Number(d.newMeter));
+      if (d.oldMeter !== "" && isFinite(Number(d.oldMeter))) completedDailyOld.push(Number(d.oldMeter));
+    });
+    const fallbackNew = completedDailyNew.length
+      ? completedDailyNew.reduce(function(a,b){return a+b;},0) / completedDailyNew.length
+      : 0;
+    const fallbackOld = completedDailyOld.length
+      ? completedDailyOld.reduce(function(a,b){return a+b;},0) / completedDailyOld.length
+      : 0;
+    if (fraction >= 0.10 && elapsedWeight > 0 && fullWeight > 0) {
+      partialFullNew = partialNew * fullWeight / elapsedWeight;
+      partialFullOld = partialOld * fullWeight / elapsedWeight;
+    } else {
+      partialFullNew = Math.max(partialNew, fallbackNew);
+      partialFullOld = Math.max(partialOld, fallbackOld);
+    }
+  }
+  const futureDays = Math.max(
+    0,
+    fullPeriodDays - completedDays - (currentDay ? 1 : 0)
+  );
+  let futureNewPerDay = 0;
+  let futureOldPerDay = 0;
+  const prior = priorPeriodDailyAverages_(readings, billingStart);
+  const observedDaysCount = completedDays + (currentDay ? 1 : 0);
+  const observedNewTotal = completedNew + partialFullNew;
+  const observedOldTotal = completedOld + partialFullOld;
+  const meterChange = readings ? estimateMeterChangeEvent_(readings, billingStart, billingEnd) : null;
+  if (meterChange) {
+    const sw = meterChange.estimatedAt;
+    const activeAfter = meterChange.activeAfter || "new";
+    const daysSinceSwap = Math.max(0, (now - Math.max(billingStart, sw)) / 86400000);
+    const daysBeforeSwap = Math.max(0, (Math.min(now, sw) - billingStart) / 86400000);
+    const meter1DaysCompleted = activeAfter === "new" ? daysSinceSwap : daysBeforeSwap;
+    const meter2DaysCompleted = activeAfter === "old" ? daysSinceSwap : daysBeforeSwap;
+    if (now >= sw) {
+      if (activeAfter === "new") {
+        futureNewPerDay = blendedDailyRate_(completedNew + partialFullNew, meter1DaysCompleted, prior && prior.newPerDay);
+        futureOldPerDay = 0;
+      } else {
+        futureNewPerDay = 0;
+        futureOldPerDay = blendedDailyRate_(completedOld + partialFullOld, meter2DaysCompleted, prior && prior.oldPerDay);
+      }
+    } else {
+      if (activeAfter === "new") {
+        futureNewPerDay = 0;
+        futureOldPerDay = blendedDailyRate_(completedOld + partialFullOld, meter2DaysCompleted, prior && prior.oldPerDay);
+      } else {
+        futureNewPerDay = blendedDailyRate_(completedNew + partialFullNew, meter1DaysCompleted, prior && prior.newPerDay);
+        futureOldPerDay = 0;
+      }
+    }
+  } else {
+    futureNewPerDay = blendedDailyRate_(observedNewTotal, observedDaysCount, prior && prior.newPerDay);
+    futureOldPerDay = blendedDailyRate_(observedOldTotal, observedDaysCount, prior && prior.oldPerDay);
+  }
+  const projectedNew =
+    completedNew + partialFullNew + futureNewPerDay * futureDays;
+  const projectedOld =
+    completedOld + partialFullOld + futureOldPerDay * futureDays;
+  return {
+    newMeter: projectedNew,
+    oldMeter: projectedOld,
+    total: projectedNew + projectedOld
+  };
+}
+function getInitialHourlyData_(readings,dayKey){
+  if(!dayKey) return [];
+  const dayStart=new Date(dayKey+"T17:00:00");
+  const dayEnd=new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate()+1);
+  const now=new Date();
+  let effectiveEnd=dayEnd;
+  if(now>=dayStart && now<dayEnd){
+    effectiveEnd=now;
+  }else if(now<dayStart){
+    return [];
+  }
+  return getHourlyChartData_(readings,dayStart,effectiveEnd);
+}
+function getHourlyChartData_(readings, dayStart, dayEnd) {
+  const output = [];
+  let cursor = new Date(dayStart);
+  while (cursor < dayEnd) {
+    const next = new Date(cursor);
+    next.setHours(next.getHours() + 1);
+    const startR = estimateReadingAt_(readings, cursor, 'new');
+    const startO = estimateReadingAt_(readings, cursor, 'old');
+    const endR = estimateReadingAt_(readings, next, 'new');
+    const endO = estimateReadingAt_(readings, next, 'old');
+    const newMeter = calculateDifference_(startR, endR);
+    const oldMeter = calculateDifference_(startO, endO);
+    const total = sumKnown_(newMeter, oldMeter);
+    output.push({
+      label: Utilities.formatDate(cursor, Session.getScriptTimeZone(), "h a"),
+      start: cursor.getTime(),
+      end: next.getTime(),
+      newMeter: newMeter,
+      oldMeter: oldMeter,
+      total: total
+    });
+    cursor = next;
+  }
+  return output;
+}
+function getDailyChartData_(readings, periodStart, periodEnd, calculationNow) {
+  if (!readings.length) return [];
+  const output=[];
+  let day=new Date(periodStart);
+  const now=calculationNow || new Date();
+  while(day < periodEnd){
+    const start=new Date(day);
+    const end=new Date(day);
+    end.setDate(end.getDate()+1);
+    const startR=interpolatedReadingsAt_(readings,start);
+    const completed=now >= end;
+    let endR;
+    let estimatedEndR=false;
+    let profileFraction=1;
+    if(completed){
+      endR=interpolatedReadingsAt_(readings,end);
+    }else{
+      const actualEndR=readingsAtOrBefore_(readings,now);
+      endR={newReading:null,oldReading:null};
+      const elapsedWeight=profileWeightBetween_(start,now);
+      const fullWeight=profileWeightBetween_(start,end);
+      if(elapsedWeight>0&&fullWeight>0&&startR.newReading!==null&&actualEndR.newReading!==null){
+        const observed=calculateDifference_(startR.newReading,actualEndR.newReading);
+        if(observed!==""){endR.newReading=Number(startR.newReading)+Number(observed)*fullWeight/elapsedWeight;estimatedEndR=true;}
+      }
+      if(elapsedWeight>0&&fullWeight>0&&startR.oldReading!==null&&actualEndR.oldReading!==null){
+        const observed=calculateDifference_(startR.oldReading,actualEndR.oldReading);
+        if(observed!==""){endR.oldReading=Number(startR.oldReading)+Number(observed)*fullWeight/elapsedWeight;estimatedEndR=true;}
+      }
+      profileFraction=elapsedWeight>0&&fullWeight>0?elapsedWeight/fullWeight:0;
+    }
+    const newMeter=calculateDifference_(startR.newReading,endR.newReading);
+    const oldMeter=calculateDifference_(startR.oldReading,endR.oldReading);
+    const total=sumKnown_(newMeter,oldMeter);
+    if(endR.newReading!==null||endR.oldReading!==null){
+      output.push({
+        label:Utilities.formatDate(start,Session.getScriptTimeZone(),"dd"),
+        date:Utilities.formatDate(start,Session.getScriptTimeZone(),"yyyy-MM-dd"),
+        period:Utilities.formatDate(start,Session.getScriptTimeZone(),"dd MMM, '5:00 PM'")+" → "+Utilities.formatDate(end,Session.getScriptTimeZone(),"dd MMM, '5:00 PM'"),
+        newMeter:newMeter,oldMeter:oldMeter,total:total,completed:completed,estimated:estimatedEndR,profileFraction:profileFraction,endTime:end.getTime()
+      });
+    }
+    day.setDate(day.getDate()+1);
+  }
+  return output;
+}
+function getColumnIndices_(headers) {
+  return {
+    date: findHeaderIndex_(headers, ["Reading Date"]),
+    time: findHeaderIndex_(headers, ["Reading Time"]),
+    newMeter: findHeaderIndex_(headers, [
+      "New Meter Reading (kWh)",
+      "Meter Reading (kWh)"
+    ]),
+    oldMeter: findHeaderIndex_(headers, [
+      "Old Meter Reading (kWh)"
+    ]),
+    loadKw: findHeaderIndex_(headers, ["Inverter Reading (kW)","Inverter Reading kW","Current Load (kW)","Current Load kW","Load (kW)"]),
+    notes: findHeaderIndex_(headers, ["Notes"])
+  };
+}
+function getRecordsForClient_() {
+  const sheet = findResponseSheet_(getSpreadsheet_());
+  if (!sheet) return [];
+  const values = sheet.getDataRange().getValues();
+  if (values.length <= 1) return [];
+  const headers = values[0];
+  const idx = getColumnIndices_(headers);
+  if (idx.date < 0 || idx.time < 0) return [];
+  const records = [];
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    if (row[idx.date] === "" || row[idx.time] === "") continue;
+    const dt = combineDateTime_(row[idx.date], row[idx.time]);
+    if (!dt) continue;
+    records.push({
+      rowNumber: i + 1,
+      date: Utilities.formatDate(
+        dt,
+        Session.getScriptTimeZone(),
+        "yyyy-MM-dd"
+      ),
+      time: Utilities.formatDate(
+        dt,
+        Session.getScriptTimeZone(),
+        "HH:mm"
+      ),
+      newMeter:
+        idx.newMeter >= 0 && row[idx.newMeter] !== ""
+          ? row[idx.newMeter]
+          : "",
+      oldMeter:
+        idx.oldMeter >= 0 && row[idx.oldMeter] !== ""
+          ? row[idx.oldMeter]
+          : "",
+      loadKw:
+        idx.loadKw >= 0 && row[idx.loadKw] !== "" ? row[idx.loadKw] :
+        (idx.notes >= 0 && row[idx.notes] !== "" ? row[idx.notes] : ""),
+      notes:
+        idx.notes >= 0 ? row[idx.notes] : "",
+      sortKey: dt.getTime()
+    });
+  }
+  records.sort(function(a, b) {
+    return b.sortKey - a.sortKey;
+  });
+  records.forEach(function(r) {
+    delete r.sortKey;
+  });
+  return records;
+}
+function saveRecord(record) {
+  if(record && record.rowNumber) requireAppOwner_();
+  const sheet = findResponseSheet_(getSpreadsheet_());
+  if (!sheet) {
+    throw new Error("No response sheet found.");
+  }
+  const headers = sheet
+    .getRange(1, 1, 1, sheet.getLastColumn())
+    .getValues()[0];
+  const idx = getColumnIndices_(headers);
+  if (idx.date < 0 || idx.time < 0) {
+    throw new Error("Required columns not found.");
+  }
+  if (!record || !record.date || !record.time) {
+    throw new Error("Date and time are required.");
+  }
+  const dateParts = String(record.date).split("-");
+  const timeParts = String(record.time).split(":");
+  const dt = new Date(
+    Number(dateParts[0]),
+    Number(dateParts[1]) - 1,
+    Number(dateParts[2]),
+    Number(timeParts[0]),
+    Number(timeParts[1]),
+    0,
+    0
+  );
+  if (isNaN(dt.getTime())) {
+    throw new Error("Invalid date or time.");
+  }
+  const newMeter =
+    record.newMeter === "" ||
+    record.newMeter === null ||
+    typeof record.newMeter === "undefined"
+      ? ""
+      : Number(record.newMeter);
+  const oldMeter =
+    record.oldMeter === "" ||
+    record.oldMeter === null ||
+    typeof record.oldMeter === "undefined"
+      ? ""
+      : Number(record.oldMeter);
+  if (newMeter !== "" && isNaN(newMeter)) {
+    throw new Error("Invalid Meter 1 reading.");
+  }
+  if (oldMeter !== "" && isNaN(oldMeter)) {
+    throw new Error("Invalid Meter 2 reading.");
+  }
+  const targetRow =
+    record.rowNumber
+      ? Number(record.rowNumber)
+      : sheet.getLastRow() + 1;
+  sheet.getRange(targetRow, idx.date + 1).setValue(dt);
+  sheet.getRange(targetRow, idx.time + 1).setValue(dt);
+  if (idx.newMeter >= 0) {
+    sheet.getRange(targetRow, idx.newMeter + 1).setValue(newMeter);
+  }
+  if (idx.oldMeter >= 0) {
+    sheet.getRange(targetRow, idx.oldMeter + 1).setValue(oldMeter);
+  }
+  const loadValue=record.loadKw===""||record.loadKw===null||typeof record.loadKw==="undefined" ? "" : Number(record.loadKw);
+  if(loadValue!=="" && isNaN(loadValue)) throw new Error("Invalid inverter reading.");
+  const loadColumn=idx.loadKw>=0 ? idx.loadKw : idx.notes;
+  if(loadColumn>=0) sheet.getRange(targetRow,loadColumn+1).setValue(loadValue);
+  rebuildData();
+  return {success: true};
+}
+function deleteRecord(rowNumber) {
+  requireAppOwner_();
+  const sheet = findResponseSheet_(getSpreadsheet_());
+  if (!sheet) throw new Error("No response sheet found.");
+  if (!rowNumber || Number(rowNumber) <= 1) {
+    throw new Error("Invalid row.");
+  }
+  sheet.deleteRow(Number(rowNumber));
+  rebuildData();
+  return {success: true};
+}
+function ensureGeneralSettingsSheet_(ss) {
+  let sheet = ss.getSheetByName("General Settings");
+  if (!sheet) sheet = ss.insertSheet("General Settings");
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1,1,1,4).setValues([[
+      "Setting","Value","Unit","Description"
+    ]]);
+    const rows = [
+      ["Goal Combined Units", CONFIG.GOAL_COMBINED_UNITS, "kWh/billing month", "Combined target for both meters."],
+      ["Pro-Rata Standard Days", CONFIG.PRO_RATA_STANDARD_DAYS, "days", "Standard cycle length used by the supplied pro-rata formula."],
+      ["App Font", CONFIG.DEFAULT_APP_FONT, "font family", "Font used throughout the web app."],
+      ["Billing Day", CONFIG.BILLING_DAY, "day of month", "Billing month starts on this day."],
+      ["Billing Hour", CONFIG.BILLING_HOUR, "24-hour time", "Billing month starts at this hour."],
+      ["Billing Minute", CONFIG.BILLING_MINUTE, "minute", "Billing month start minute."],
+      ["Solar Start Hour", CONFIG.SOLAR_START_HOUR, "24-hour time", "Start of the configured daytime/solar period."],
+      ["Solar Start Minute", CONFIG.SOLAR_START_MINUTE, "minute", "Start minute of the daytime/solar period."],
+      ["Solar End Hour", CONFIG.SOLAR_END_HOUR, "24-hour time", "End of the configured daytime/solar period."],
+      ["Solar End Minute", CONFIG.SOLAR_END_MINUTE, "minute", "End minute of the daytime/solar period."],
+      ["Reminder Hour", CONFIG.REMINDER_HOUR, "24-hour time", "Daily reminder hour."],
+      ["Reminder Minute", CONFIG.REMINDER_MINUTE, "minute", "Daily reminder minute."]
+    ];
+    sheet.getRange(2,1,rows.length,4).setValues(rows);
+    styleHeader_(sheet,4);
+    sheet.autoResizeColumns(1,4);
+    sheet.setFrozenRows(1);
+  }
+  const existing=sheet.getLastRow()>1 ? sheet.getRange(2,1,Math.max(1,sheet.getLastRow()-1),1).getValues().flat().map(String) : [];
+  const additions=[];
+  if(existing.indexOf("Pro-Rata Standard Days")<0) additions.push(["Pro-Rata Standard Days",CONFIG.PRO_RATA_STANDARD_DAYS,"days","Standard cycle length used by the supplied pro-rata formula."]);
+  if(existing.indexOf("App Font")<0) additions.push(["App Font",CONFIG.DEFAULT_APP_FONT,"font family","Font used throughout the web app."]);
+  if(additions.length) sheet.getRange(sheet.getLastRow()+1,1,additions.length,4).setValues(additions);
+  return sheet;
+}
+function getGeneralSettings_() {
+  if (GENERAL_SETTINGS_CACHE) return GENERAL_SETTINGS_CACHE;
+  const sheet = ensureGeneralSettingsSheet_(getSpreadsheet_());
+  const values = sheet.getDataRange().getValues();
+  const map = {};
+  for (let i=1;i<values.length;i++) {
+    const key=String(values[i][0]||"").trim();
+    if(key) map[key]=values[i][1];
+  }
+  const n=function(k,d){
+    const v=map[k];
+    return v!=="" && v!==null && !isNaN(Number(v)) ? Number(v) : d;
+  };
+  GENERAL_SETTINGS_CACHE = {
+    goalCombinedUnits:n("Goal Combined Units",CONFIG.GOAL_COMBINED_UNITS),
+    proRataStandardDays:n("Pro-Rata Standard Days",CONFIG.PRO_RATA_STANDARD_DAYS),
+    appFont:String(map["App Font"]||CONFIG.DEFAULT_APP_FONT),
+    billingDay:n("Billing Day",CONFIG.BILLING_DAY),
+    billingHour:n("Billing Hour",CONFIG.BILLING_HOUR),
+    billingMinute:n("Billing Minute",CONFIG.BILLING_MINUTE),
+    solarStartHour:n("Solar Start Hour",CONFIG.SOLAR_START_HOUR),
+    solarStartMinute:n("Solar Start Minute",CONFIG.SOLAR_START_MINUTE),
+    solarEndHour:n("Solar End Hour",CONFIG.SOLAR_END_HOUR),
+    solarEndMinute:n("Solar End Minute",CONFIG.SOLAR_END_MINUTE),
+    reminderHour:n("Reminder Hour",CONFIG.REMINDER_HOUR),
+    reminderMinute:n("Reminder Minute",CONFIG.REMINDER_MINUTE)
+  };
+  return GENERAL_SETTINGS_CACHE;
+}
+function getGeneralSettingsForClient() {
+  const sheet=ensureGeneralSettingsSheet_(getSpreadsheet_());
+  const values=sheet.getDataRange().getValues();
+  const rows=[];
+  for(let i=1;i<values.length;i++){
+    if(values[i][0]) rows.push({
+      key:String(values[i][0]),
+      value:values[i][1]===null?"":String(values[i][1]),
+      unit:values[i][2]===null?"":String(values[i][2]),
+      description:values[i][3]===null?"":String(values[i][3])
+    });
+  }
+  return {rows:rows};
+}
+function saveGeneralSettingsFromClient(values) {
+  if(!values || typeof values!=="object") throw new Error("No general settings supplied.");
+  const sheet=ensureGeneralSettingsSheet_(getSpreadsheet_());
+  const data=sheet.getDataRange().getValues();
+  const numericKeys={
+    "Goal Combined Units":true,"Pro-Rata Standard Days":true,"Billing Day":true,"Billing Hour":true,
+    "Billing Minute":true,"Solar Start Hour":true,"Solar Start Minute":true,
+    "Solar End Hour":true,"Solar End Minute":true,"Reminder Hour":true,
+    "Reminder Minute":true
+  };
+  for(let i=1;i<data.length;i++){
+    const key=String(data[i][0]||"").trim();
+    if(!key || !Object.prototype.hasOwnProperty.call(values,key)) continue;
+    const raw=values[key];
+    sheet.getRange(i+1,2).setValue(
+      numericKeys[key] && raw!=="" && !isNaN(Number(raw)) ? Number(raw) : raw
+    );
+  }
+  GENERAL_SETTINGS_CACHE=null;
+  rebuildData();
+  return {success:true};
+}
+function ensureNotesSheet_(ss) {
+  let sheet=ss.getSheetByName("Notes");
+  if(!sheet) sheet=ss.insertSheet("Notes");
+  if(sheet.getLastRow()===0){
+    sheet.getRange(1,1,1,4).setValues([["Timestamp","Note","Author","Type"]]);
+    styleHeader_(sheet,4);
+    sheet.setFrozenRows(1);
+    sheet.autoResizeColumns(1,4);
+  }
+  return sheet;
+}
+function getNotesForClient_() {
+  const sheet=ensureNotesSheet_(getSpreadsheet_());
+  const values=sheet.getDataRange().getValues();
+  const rows=[];
+  for(let i=1;i<values.length;i++){
+    if(!values[i][1]) continue;
+    rows.push({
+      rowNumber:i+1,
+      timestamp:values[i][0] instanceof Date ? values[i][0].getTime() : new Date(values[i][0]).getTime(),
+      note:String(values[i][1]||""),
+      author:String(values[i][2]||""),
+      type:String(values[i][3]||"Operational")
+    });
+  }
+  rows.sort(function(a,b){return b.timestamp-a.timestamp;});
+  return rows;
+}
+function addOperationalNote(note) {
+  const text=String(note||"").trim();
+  if(!text) throw new Error("Note cannot be empty.");
+  const email=Session.getActiveUser().getEmail() || "";
+  ensureNotesSheet_(getSpreadsheet_()).appendRow([
+    new Date(),text,email,"Operational"
+  ]);
+  return {success:true};
+}
+function deleteOperationalNote(rowNumber) {
+  if(!rowNumber || Number(rowNumber)<=1) throw new Error("Invalid note.");
+  ensureNotesSheet_(getSpreadsheet_()).deleteRow(Number(rowNumber));
+  return {success:true};
+}
+function ensureNotifySheet_(ss) {
+  let sheet = ss.getSheetByName("Notify List");
+  if (!sheet) {
+    sheet = ss.insertSheet("Notify List");
+    sheet.getRange(1, 1, 1, 2).setValues([[
+      "Name",
+      "Email"
+    ]]);
+    styleHeader_(sheet, 2);
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+function getNotifyEmails_() {
+  const sheet = ensureNotifySheet_(getSpreadsheet_());
+  const values = sheet.getDataRange().getValues();
+  const result = [];
+  for (let i = 1; i < values.length; i++) {
+    const email = String(values[i][1] || "").trim();
+    if (!email) continue;
+    result.push({
+      rowNumber: i + 1,
+      name: values[i][0] || "",
+      email: email
+    });
+  }
+  return result;
+}
+function addNotifyPerson(person) {
+  if (!person || !person.email) {
+    throw new Error("Email is required.");
+  }
+  const email = String(person.email).trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error("Invalid email address.");
+  }
+  const existing = getNotifyEmails_();
+  if (existing.some(function(p) {
+    return p.email.toLowerCase() === email.toLowerCase();
+  })) {
+    throw new Error("That email is already on the list.");
+  }
+  ensureNotifySheet_(getSpreadsheet_()).appendRow([
+    person.name || "",
+    email
+  ]);
+  return {success: true};
+}
+function deleteNotifyPerson(rowNumber) {
+  if (!rowNumber || Number(rowNumber) <= 1) {
+    throw new Error("Invalid row.");
+  }
+  ensureNotifySheet_(getSpreadsheet_()).deleteRow(Number(rowNumber));
+  return {success: true};
+}
+function sendMissingReadingReminders() {
+  const responseSheet = findResponseSheet_(getSpreadsheet_());
+  if (!responseSheet) return;
+  const readings = readFormResponses_(responseSheet);
+  readings.sort(function(a, b) {
+    return a.datetime - b.datetime;
+  });
+  applyCarryForward_(readings);
+  if (!readings.length) return;
+  const people = getNotifyEmails_();
+  if (!people.length) return;
+  createReminderEvent_(people.map(function(p) {
+    return p.email;
+  }));
+}
+function createReminderEvent_(emails) {
+  const start = new Date();
+  const gs=getGeneralSettings_();
+  start.setHours(gs.reminderHour,gs.reminderMinute,0,0);
+  const end = new Date(start.getTime() + 15 * 60000);
+  CalendarApp.getDefaultCalendar().createEvent(
+    "⚡ Take electricity meter reading",
+    start,
+    end,
+    {
+      guests: emails.join(","),
+      description: "Daily electricity meter reading reminder.",
+      sendInvites: true
+    }
+  );
+}
+function ensureSheet_(ss, name) {
+  return ss.getSheetByName(name) || ss.insertSheet(name);
+}
+function styleHeader_(sheet, columns) {
+  sheet.getRange(1, 1, 1, columns)
+    .setFontWeight("bold")
+    .setBackground("#d9eaf7");
+}
+function readingsAtOrBefore_(readings, boundary) {
+  let newReading = null;
+  let oldReading = null;
+  for (let i = 0; i < readings.length; i++) {
+    if (readings[i].datetime > boundary) break;
+    if (readings[i].newReading !== null) {
+      newReading = readings[i].newReading;
+    }
+    if (readings[i].oldReading !== null) {
+      oldReading = readings[i].oldReading;
+    }
+  }
+  return {
+    newReading: newReading,
+    oldReading: oldReading
+  };
+}
+function calculateDifference_(start, end) {
+  if (start === null || end === null) return "";
+  const difference = end - start;
+  if (difference < 0) return "";
+  return difference;
+}
+function sumKnown_(a, b) {
+  if (a === "" && b === "") return "";
+  return (a === "" ? 0 : a) + (b === "" ? 0 : b);
+}
+function getSpreadsheet_() {
+  const id = PropertiesService
+    .getScriptProperties()
+    .getProperty(CONFIG.PROPERTY_SPREADSHEET_ID);
+  if (!id) {
+    throw new Error(
+      "Spreadsheet ID not found. Run the original setup() first, or set the spreadsheet ID in Script Properties."
+    );
+  }
+  return SpreadsheetApp.openById(id);
+}
+function findResponseSheet_(ss) {
+  const sheets = ss.getSheets();
+  for (let i = 0; i < sheets.length; i++) {
+    const name = sheets[i].getName().toLowerCase();
+    if (name.indexOf("form responses") === 0) {
+      return sheets[i];
+    }
+  }
+  return null;
+}
+function findHeaderIndex_(headers, names) {
+  for (let i = 0; i < headers.length; i++) {
+    const header = String(headers[i]).trim();
+    if (names.indexOf(header) !== -1) {
+      return i;
+    }
+  }
+  return -1;
+}
+function combineDateTime_(dateValue, timeValue) {
+  const d = dateValue instanceof Date
+    ? new Date(dateValue)
+    : new Date(dateValue);
+  if (isNaN(d.getTime())) return null;
+  let hours = 0;
+  let minutes = 0;
+  let seconds = 0;
+  if (timeValue instanceof Date) {
+    hours = timeValue.getHours();
+    minutes = timeValue.getMinutes();
+    seconds = timeValue.getSeconds();
+  } else {
+    const text = String(timeValue).trim().toUpperCase();
+    const match = text.match(
+      /(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/
+    );
+    if (!match) return null;
+    hours = Number(match[1]);
+    minutes = Number(match[2]);
+    seconds = match[3] ? Number(match[3]) : 0;
+    const ampm = match[4];
+    if (ampm === "PM" && hours < 12) hours += 12;
+    if (ampm === "AM" && hours === 12) hours = 0;
+  }
+  d.setHours(hours, minutes, seconds, 0);
+  return d;
+}
+function isSolarPeriod_(datetime) {
+  const gs=getGeneralSettings_();
+  const minutes = datetime.getHours() * 60 + datetime.getMinutes();
+  const start=gs.solarStartHour*60+gs.solarStartMinute;
+  const end=gs.solarEndHour*60+gs.solarEndMinute;
+  return minutes >= start && minutes < end;
+}
+function getFivePmDayStart_(datetime) {
+  const gs=getGeneralSettings_();
+  const d = new Date(
+    datetime.getFullYear(),
+    datetime.getMonth(),
+    datetime.getDate(),
+    gs.billingHour,
+    gs.billingMinute,
+    0,
+    0
+  );
+  if (datetime < d) {
+    d.setDate(d.getDate() - 1);
+  }
+  return d;
+}
+function formatFivePmDay_(datetime) {
+  return Utilities.formatDate(
+    getFivePmDayStart_(datetime),
+    Session.getScriptTimeZone(),
+    "dd MMM yyyy"
+  );
+}
+function getBillingPeriodStart_(datetime) {
+  const gs=getGeneralSettings_();
+  let year = datetime.getFullYear();
+  let month = datetime.getMonth();
+  let start = new Date(
+    year,
+    month,
+    gs.billingDay,
+    gs.billingHour,
+    gs.billingMinute,
+    0,
+    0
+  );
+  if (datetime < start) {
+    start = new Date(
+      year,
+      month - 1,
+      gs.billingDay,
+      gs.billingHour,
+      gs.billingMinute,
+      0,
+      0
+    );
+  }
+  return start;
+}
+function addMonth_(date) {
+  return new Date(
+    date.getFullYear(),
+    date.getMonth() + 1,
+    date.getDate(),
+    date.getHours(),
+    date.getMinutes(),
+    date.getSeconds(),
+    date.getMilliseconds()
+  );
+}
+function getLast24HoursHourlyData_(readings, now) {
+  const start = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  return getHourlyChartData_(readings, start, now);
+}
+function getBillingMonth_(datetime) {
+  return formatBillingMonth_(addMonth_(getBillingPeriodStart_(datetime)));
+}
+function formatBillingMonth_(date) {
+  return Utilities.formatDate(
+    date,
+    Session.getScriptTimeZone(),
+    "MMM yyyy"
+  );
+}
+function formatDateTime_(date) {
+  return Utilities.formatDate(
+    date,
+    Session.getScriptTimeZone(),
+    "dd MMM yyyy, hh:mm a"
+  );
+}
+function ensureBillingHistorySheet_(ss) {
+  let sheet = ss.getSheetByName("Billing History");
+  if (!sheet) {
+    sheet = ss.insertSheet("Billing History");
+    sheet.getRange(1, 1, 1, 6).setValues([[
+      "Month", "Meter", "Status", "Units", "Bill (Rs.)", "Payment (Rs.)"
+    ]]);
+    styleHeader_(sheet, 6);
+    sheet.setFrozenRows(1);
+    sheet.getRange(2, 1, sheet.getMaxRows() - 1, 1).setNumberFormat("@");
+    const rows = [
+      ["Jul 25", "METER 1", "EX", 133, 1362, 1419],
+      ["Aug 25", "METER 1", "EX", 100, 1112, 1112],
+      ["Sep 25", "METER 1", "EX", 131, 1515, 1515],
+      ["Oct 25", "METER 1", "EX", 116, 1318, 1318],
+      ["Nov 25", "METER 1", "EX", 46, 540, 540],
+      ["Dec 25", "METER 1", "EX", 64, 851, 0],
+      ["Jan 26", "METER 1", "EX", 55, 1666, 1666],
+      ["Feb 26", "METER 1", "EX", 59, 841, 841],
+      ["Mar 26", "METER 1", "EX", 84, 1952, 1952],
+      ["Apr 26", "METER 1", "EX", 61, 1635, 1635],
+      ["May 26", "METER 1", "EX", 51, 1399, 1399],
+      ["Jun 26", "METER 1", "EX", 166, 3413, 0],
+      ["Jul 25", "METER 2", "EX", 111, 1087, 1133],
+      ["Aug 25", "METER 2", "EX", 122, 1421, 1421],
+      ["Sep 25", "METER 2", "EX", 94, 1022, 1022],
+      ["Oct 25", "METER 2", "EX", 104, 1154, 1154],
+      ["Nov 25", "METER 2", "EX", 86, 1010, 1010],
+      ["Dec 25", "METER 2", "EX", 50, 664, 0],
+      ["Jan 26", "METER 2", "EX", 71, 1681, 1681],
+      ["Feb 26", "METER 2", "EX", 41, 586, 586],
+      ["Mar 26", "METER 2", "EX", 23, 921, 921],
+      ["Apr 26", "METER 2", "EX", 37, 1042, 1042],
+      ["May 26", "METER 2", "EX", 64, 1339, 1339],
+      ["Jun 26", "METER 2", "EX", 165, 3011, 3011]
+    ];
+    sheet.getRange(2, 1, rows.length, 6).setValues(rows);
+    sheet.autoResizeColumns(1, 6);
+  }
+  return sheet;
+}
+function ensureReadingCollectionsSheet_(ss) {
+  let sheet = ss.getSheetByName("Reading Collections");
+  if (!sheet) {
+    sheet = ss.insertSheet("Reading Collections");
+    sheet.getRange(1, 1, 1, 6).setValues([[
+      "Month", "Meter", "Collection Date", "Collection Time", "Previous Baseline", "Raw Reading"
+    ]]);
+    styleHeader_(sheet, 6);
+    sheet.getRange(2, 1, sheet.getMaxRows() - 1, 1).setNumberFormat("@");
+    sheet.getRange(2, 4, sheet.getMaxRows() - 1, 1).setNumberFormat("@");
+    sheet.setFrozenRows(1);
+    const rows = [
+      ["Aug 2026", "METER 1", "2026-08-15", "12:05", 2435, 2598.10],
+      ["Aug 2026", "METER 2", "2026-08-15", "12:06", 4854, 4951.44]
+    ];
+    sheet.getRange(2, 1, rows.length, 6).setValues(rows);
+    sheet.autoResizeColumns(1, 6);
+  } else {
+    const headers = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getValues()[0];
+    for (let h = headers.length - 1; h >= 0; h--) {
+      if (String(headers[h] || "").trim().toLowerCase() === "extended days") {
+        sheet.deleteColumn(h + 1);
+      }
+    }
+  }
+  return sheet;
+}
+function safeMonthLabel_(value) {
+  if (value instanceof Date) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), "MMM yyyy");
+  }
+  return String(value || "");
+}
+function safeTimeLabel_(value) {
+  if (value instanceof Date) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), "HH:mm");
+  }
+  return String(value || "");
+}
+function getBillingHistory_() {
+  const ss = getSpreadsheet_();
+  const sheet = ensureBillingHistorySheet_(ss);
+  const values = sheet.getDataRange().getValues();
+  const result = [];
+  for (let i = 1; i < values.length; i++) {
+    if (!values[i][0]) continue;
+    result.push({
+      rowNumber: i + 1,
+      month: safeMonthLabel_(values[i][0]),
+      meter: String(values[i][1]),
+      status: String(values[i][2]),
+      units: Number(values[i][3] || 0),
+      bill: Number(values[i][4] || 0),
+      payment: Number(values[i][5] || 0)
+    });
+  }
+  return result;
+}
+function collectionDateTime_(c) {
+  const timePart = c.time && String(c.time).length ? c.time : "00:00";
+  const dt = new Date(String(c.date) + "T" + timePart + ":00");
+  return isNaN(dt.getTime()) ? null : dt;
+}
+function getReadingCollections_() {
+  const ss = getSpreadsheet_();
+  const sheet = ensureReadingCollectionsSheet_(ss);
+  const values = sheet.getDataRange().getValues();
+  const result = [];
+  for (let i = 1; i < values.length; i++) {
+    if (!values[i][0]) continue;
+    const rawDate = values[i][2];
+    const dateStr = rawDate instanceof Date
+      ? Utilities.formatDate(rawDate, Session.getScriptTimeZone(), "yyyy-MM-dd")
+      : String(rawDate || "");
+    const timeStr = safeTimeLabel_(values[i][3]);
+    result.push({
+      rowNumber: i + 1,
+      month: safeMonthLabel_(values[i][0]),
+      meter: String(values[i][1]),
+      date: dateStr,
+      time: timeStr,
+      previousBaseline: Number(values[i][4] || 0),
+      rawReading: Number(values[i][5] || 0)
+    });
+  }
+  // Extended days are always calculated from timestamps — never read from the sheet.
+  const byMeter = {};
+  result.forEach(function(c) {
+    const key = String(c.meter || "");
+    if (!byMeter[key]) byMeter[key] = [];
+    byMeter[key].push(c);
+  });
+  Object.keys(byMeter).forEach(function(key) {
+    const list = byMeter[key].slice().sort(function(a, b) {
+      const da = collectionDateTime_(a);
+      const db = collectionDateTime_(b);
+      return (da ? da.getTime() : 0) - (db ? db.getTime() : 0);
+    });
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      const dt = collectionDateTime_(c);
+      c.standardDays = standardDaysForCollection_(c);
+      if (i > 0) {
+        const prevDt = collectionDateTime_(list[i - 1]);
+        c.extendedDays = Math.round(
+          (dt && prevDt)
+            ? (dt.getTime() - prevDt.getTime()) / 86400000
+            : defaultExtendedDaysForCollection_(dt || new Date(), c.month)
+        );
+      } else {
+        c.extendedDays = Math.round(defaultExtendedDaysForCollection_(dt || new Date(), c.month));
+      }
+    }
+  });
+  return result;
+}
+function addReadingCollection(collection) {
+  requireAppOwner_();
+  if (!collection || !collection.meter || !collection.date || !collection.time ||
+      collection.rawReading === "" || collection.rawReading === null || typeof collection.rawReading === "undefined") {
+    throw new Error("Meter, collection date, collection time and raw reading are required.");
+  }
+  const meter = String(collection.meter).trim();
+  const dateStr = String(collection.date).trim();
+  const timeStr = String(collection.time).trim();
+  const rawReading = Number(collection.rawReading);
+  if (isNaN(rawReading)) throw new Error("Invalid raw reading.");
+  const dateParts = dateStr.split("-");
+  const timeParts = timeStr.split(":");
+  const dt = new Date(
+    Number(dateParts[0]),
+    Number(dateParts[1]) - 1,
+    Number(dateParts[2]),
+    Number(timeParts[0] || 0),
+    Number(timeParts[1] || 0),
+    0,
+    0
+  );
+  if (isNaN(dt.getTime())) {
+    throw new Error("Invalid collection date or time.");
+  }
+  const hasOverrideMonth = collection.month !== "" && collection.month !== null && typeof collection.month !== "undefined";
+  const month = hasOverrideMonth
+    ? String(collection.month).trim()
+    : formatBillingMonth_(addMonth_(getBillingPeriodStart_(dt)));
+  const previous = getLatestPriorCollection_(meter, dt);
+  const hasOverrideBaseline = collection.previousBaseline !== "" && collection.previousBaseline !== null &&
+    typeof collection.previousBaseline !== "undefined" && !isNaN(Number(collection.previousBaseline));
+  const previousBaseline = hasOverrideBaseline
+    ? Number(collection.previousBaseline)
+    : (previous ? previous.rawReading : 0);
+  // extendedDays is not stored; computed on read from collection timestamps
+  const ss = getSpreadsheet_();
+  const sheet = ensureReadingCollectionsSheet_(ss);
+  const values = sheet.getDataRange().getValues();
+  let targetRow = values.length + 1;
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][0]).trim().toLowerCase() === month.toLowerCase() &&
+        String(values[i][1]).trim().toLowerCase() === meter.toLowerCase()) {
+      targetRow = i + 1;
+      break;
+    }
+  }
+  sheet.getRange(targetRow, 1, 1, 1).setNumberFormat("@");
+  sheet.getRange(targetRow, 4, 1, 1).setNumberFormat("@");
+  sheet.getRange(targetRow, 1, 1, 6).setValues([[
+    month, meter, dt, timeStr, previousBaseline, rawReading
+  ]]);
+  rebuildData();
+  const computedExtended = previous
+    ? (function() {
+        const prevTimePart = previous.time && String(previous.time).length ? previous.time : "00:00";
+        const prevDt = new Date(previous.date + "T" + prevTimePart + ":00");
+        return isNaN(prevDt.getTime())
+          ? defaultExtendedDaysForCollection_(dt, month)
+          : (dt - prevDt) / 86400000;
+      })()
+    : defaultExtendedDaysForCollection_(dt, month);
+  return {success: true, month: month, previousBaseline: previousBaseline, extendedDays: computedExtended};
+}
+
+function getDashboardHTML_() {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&family=Libre+Baskerville:wght@400;700&family=Merriweather:wght@400;700;900&family=Open+Sans:wght@400;600;700;900&family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Electricity Monitor</title>
+<style>
+*{box-sizing:border-box}body{font-family:var(--app-font,system-ui);margin:0;background:#f4f6f8;font-family:Arial,sans-serif;color:#17202a}
+.container{max-width:1250px;margin:auto;padding:18px}
+.header{background:#17202a;color:#fff;padding:22px;border-radius:16px;margin-bottom:16px}
+.header h1{margin:0 0 6px}.header p{margin:0;opacity:.8}.tabBar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:18px}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;background:#fff;padding:6px;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.07)}
+.tabBtn{border:0;background:transparent;color:#6b7280;padding:10px 16px;border-radius:8px;font-size:14px;font-weight:bold;cursor:pointer}
+.tabBtnActive{background:#17202a;color:#fff}#tabBtn-add{background:#db4d4d;color:#fff}#tabBtn-add.tabBtnActive{background:#dc2626}.button{background:#fff;color:#17202a;border:1px solid #e5e7eb;border-radius:9px;padding:10px 16px;cursor:pointer;font-size:14px;font-weight:bold}
+.tabPanel{display:none}.activeTab{display:block}.card{background:#fff;border-radius:16px;padding:22px;box-shadow:0 2px 8px rgba(0,0,0,.07)}
+.label{font-size:13px;color:#6b7280;margin-bottom:7px;text-transform:uppercase;letter-spacing:.4px}
+.value{font-size:32px;font-weight:800}
+.unit{font-size:14px;color:#6b7280}
+.billingTop{margin-bottom:18px}
+.billingHeader{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;margin-bottom:14px}
+.summaryMonth{font-size:25px;font-weight:800}
+.summaryPeriod{color:#6b7280;font-size:13px;margin-top:4px}
+.remaining{font-weight:bold;font-size:14px;white-space:nowrap}
+.progressTrack{position:relative;width:100%;height:18px;background:#e5e7eb;border-radius:999px;overflow:visible}
+.progressFill{height:100%;background:#17202a;border-radius:999px;overflow:hidden}
+.changeMarker{position:absolute;top:-3px;width:3px;height:24px;background:#b91c1c;transform:translateX(-50%);z-index:2}
+.billMeterBlock{margin-top:20px;border:1px solid #e5e7eb;border-radius:12px;padding:16px}
+.billMeterBlock h3{margin:0 0 12px;font-size:18px}.billSteps{display:flex;flex-direction:column}.billStep{display:grid;grid-template-columns:180px 1fr 130px;gap:12px;padding:10px 0;border-bottom:1px solid #eee;align-items:center}
+.billStepLabel{font-weight:600}.billStepFormula{font-family:monospace;color:#4b5563}.billStepAmount{text-align:right;font-weight:600}.billStepTotal{border-bottom:0;border-top:2px solid #111827;margin-top:4px;padding-top:14px}.billTotalBox{display:flex;justify-content:space-between;align-items:center;margin-top:20px;padding:18px;border-radius:12px;background:#f3f4f6;font-size:18px}.billTotalBox strong{font-size:24px}.billMeta{color:#4b5563;margin-bottom:8px}.tariffGrid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px;margin:16px 0}.tariffGrid label{display:flex;flex-direction:column;gap:6px;font-weight:600}.tariffGrid input{padding:10px;border:1px solid #d1d5db;border-radius:8px;font:inherit;font-weight:400}@media(max-width:700px){.tariffGrid{grid-template-columns:1fr}}.historyTable{width:100%;border-collapse:collapse;margin-bottom:8px}.historyTable th,.historyTable td{padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:13px}.historyTable th{background:#f9fafb;text-transform:uppercase;font-size:11px;letter-spacing:.4px;color:#6b7280}.historyTable td.num{text-align:right;font-variant-numeric:tabular-nums}.historyBlock{margin-bottom:22px}.historyBlock:last-child{margin-bottom:0}.collectionForm{background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;align-items:end;margin-top:10px}.collectionForm label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;color:#4b5563}.collectionForm input,.collectionForm select{padding:9px;border:1px solid #d1d5db;border-radius:8px;font:inherit}.collectionForm .button{grid-column:span 1;height:40px}.collectionAdvanced{grid-column:1/-1;margin-top:4px;border-top:1px dashed #d1d5db;padding-top:10px}.collectionAdvanced summary{cursor:pointer;font-size:12px;font-weight:700;color:#4b5563;margin-bottom:8px}.collectionAdvancedGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}.auditCard{border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;margin-bottom:10px;background:#fff}.auditCard h4{margin:0 0 8px}.auditRow{display:flex;justify-content:space-between;font-size:13px;padding:3px 0;border-bottom:1px dashed #e5e7eb}.auditRow:last-child{border-bottom:0}.darkTheme .historyTable th{background:#111827}.darkTheme .auditCard{background:#1f2937;border-color:#374151}.darkTheme .auditRow{border-color:#374151}.darkTheme .collectionAdvanced{border-color:#4b5563}@media(max-width:700px){.billStep{grid-template-columns:1fr}.billStepAmount{text-align:left}}.progressMeta{display:flex;justify-content:space-between;color:#6b7280;font-size:13px;margin-top:8px}
+.mainGrid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(320px,1fr);gap:16px;align-items:stretch}
+.totalCard{border-top:6px solid #111827;min-height:100%}
+.meterColumn{display:flex;flex-direction:column;gap:16px}
+.meterCard{flex:1;padding:20px}
+.meter1{border-top:6px solid #2563eb}.meter2{border-top:6px solid #f59e0b}.metricGrid{display:grid;grid-template-columns:1fr 1fr;gap:0 22px;margin-top:18px}
+.metric{padding:13px 0;border-top:1px solid #eef0f2}
+.metricLabel{color:#6b7280;font-size:13px;margin-bottom:4px}
+.metricValue{font-size:17px;font-weight:700}
+.metricValue.large{font-size:24px}
+.totalUsage{font-size:54px;line-height:1;font-weight:900;margin:8px 0 4px}
+.totalSubtitle{color:#6b7280;font-size:14px}
+.carryForwardNote{margin-top:10px;padding:9px 11px;border-radius:8px;background:#f3f4f6;font-size:12px;color:#4b5563}
+.darkTheme .carryForwardNote{background:#111827;color:#d1d5db}.usageFormula{margin-top:6px;font-size:13px;font-weight:600;color:#6b7280;font-variant-numeric:tabular-nums;letter-spacing:0.02em}
+.darkTheme .usageFormula{color:#9ca3af}.billBox{margin-top:18px;padding-top:15px;border-top:2px solid #eef0f2}
+.billRow{display:flex;justify-content:space-between;gap:15px;padding:8px 0}
+.billRow strong{font-size:18px}.split{margin-top:18px;padding-top:15px;border-top:2px solid #eef0f2}
+.splitBar{height:14px;display:flex;border-radius:999px;overflow:hidden;margin:10px 0}
+.split1{background:#2563eb}.split2{background:#f59e0b}.splitLegend{display:flex;justify-content:space-between;gap:12px;font-size:13px;color:#6b7280}
+.currentReading{font-size:29px;font-weight:800;margin:5px 0 2px}
+.readingUnit{color:#6b7280;font-size:13px}
+.section{margin-top:18px}
+.section h2{font-size:19px;margin:0 0 10px}
+.chart{background:#fff;padding:22px 22px 44px 22px;border-radius:15px;box-shadow:0 2px 8px rgba(0,0,0,.07);overflow-x:auto}.chartLegend{display:flex;gap:18px;font-size:13px;color:#6b7280}
+.legendItem{display:flex;align-items:center;gap:6px}
+.legendBox{width:13px;height:13px;border-radius:3px}
+.legend1{background:#2563eb}.legend2{background:#f59e0b}.graph{min-width:720px;height:360px;display:flex;margin-top:20px}
+.yAxis{width:55px;display:flex;flex-direction:column;justify-content:space-between;padding:10px 8px 0 0;text-align:right;color:#6b7280;font-size:12px}
+.plotArea{flex:1;position:relative;border-left:1px solid #9ca3af;border-bottom:1px solid #9ca3af;background-image:linear-gradient(to bottom,#e5e7eb 1px,transparent 1px);background-size:100% 20%;box-sizing:border-box}
+.graphBars{position:absolute;inset:0;display:flex;align-items:flex-end;gap:0px;padding:10px 10px 0}
+.graphDay{flex:1;height:100%;min-width:35px;position:relative;display:flex;align-items:flex-end;justify-content:center}
+.graphBar{width:70%;min-width:22px;max-width:58px;position:relative;border-radius:5px 5px 0 0;display:flex;flex-direction:column-reverse;overflow:visible}
+.graphBarClickable{cursor:pointer;transition:filter .12s ease,transform .12s ease}.graphBarClickable:hover{filter:brightness(1.08);transform:translateY(-2px)}.graphSegment{width:100%;display:flex;align-items:center;justify-content:center}
+.graphSegment1{background:#2563eb}.graphSegment2{background:#f59e0b}.graphSegmentValue{color:#fff;font-size:11px;font-weight:bold}
+.graphValue{position:absolute;top:-24px;left:50%;transform:translateX(-50%);font-size:15px;font-weight:900;white-space:nowrap}
+.graphLabel{position:absolute;top:100%;margin-top:10px;font-size:11px;color:#6b7280;white-space:nowrap;left:50%;transform:translateX(-50%)}
+.tableWrap{background:#fff;border-radius:15px;padding:12px;box-shadow:0 2px 8px rgba(0,0,0,.07);overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:700px}
+th{text-align:left;font-size:12px;color:#6b7280;text-transform:uppercase;padding:10px 8px;border-bottom:2px solid #e5e7eb}
+td{padding:7px 8px;border-bottom:1px solid #f0f1f3}
+input{width:100%;border:1px solid #d1d5db;border-radius:8px;padding:8px 9px;font-size:13px;font-family:Arial,sans-serif}
+input:disabled{border-color:transparent;background:transparent}
+.addRow td{background:#eef4fb}.smallButton{border:0;border-radius:8px;padding:8px 12px;font-size:15px;line-height:1;cursor:pointer;margin-right:6px}
+.editBtn{background:#17202a;color:#fff}.saveBtn{background:#2563eb;color:#fff}.addBtn{background:#16a34a;color:#fff}.deleteBtn{background:#fee2e2;color:#991b1b}.panelIntro{margin:0 0 14px;color:#6b7280;font-size:13px}
+.loading{text-align:center;padding:0px}.error{background:#fee2e2;padding:15px;border-radius:10px;color:#991b1b}
+.billInfo{background:#fff;border-radius:15px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.07);margin-bottom:15px}
+.billTable{min-width:720px}
+.note{color:#6b7280;font-size:12px;margin-top:15px}
+.billingMonthControl{display:flex;align-items:center;gap:8px;background:#fff;padding:6px;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.07)}.billingMonthLabel{padding:10px 6px 10px 10px;color:#6b7280;font-size:13px;font-weight:bold;white-space:nowrap}.billingMonthSelect{border:0;background:#17202a;color:#fff;border-radius:8px;padding:10px;font-size:14px;font-weight:bold;cursor:pointer;min-width:150px}.billingMonthSelect:disabled{opacity:.6;cursor:wait}.billingMonthControl.busy{opacity:.8}.actionBusy{opacity:.55;cursor:wait!important}.estimatedDay{border:1px dashed #9ca3af}@media(max-width:900px){.mainGrid{grid-template-columns:1fr}.meterColumn{display:grid;grid-template-columns:1fr 1fr}}@media(max-width:650px){.container{padding:10px}.meterColumn{display:flex}.metricGrid{grid-template-columns:1fr}.totalUsage{font-size:44px}.billingHeader{align-items:flex-start;flex-direction:column}}.brandTitle{display:block;border:0;background:transparent;color:#fff;font:inherit;font-size:28px;font-weight:700;padding:0;cursor:default;text-align:left}.brandTitle:focus{outline:2px solid rgba(255,255,255,.5);outline-offset:4px;border-radius:4px}body.darkTheme{background:#111827;color:#e5e7eb}.darkTheme .tabs,.darkTheme .billingMonthControl,.darkTheme .card,.darkTheme .section,.darkTheme .billInfo,.darkTheme .tableWrap{background:#1f2937;color:#e5e7eb}.darkTheme .panelIntro,.darkTheme .label,.darkTheme .metricLabel,.darkTheme .readingUnit,.darkTheme .note{color:#9ca3af}.darkTheme input,.darkTheme select,.darkTheme textarea{background:#111827;color:#e5e7eb;border-color:#4b5563}.darkTheme .tabBtn{color:#d1d5db}.darkTheme .tabBtnActive{background:#374151;color:#fff}.darkTheme .button{background:#111827;color:#e5e7eb;border-color:#4b5563}.darkTheme .tariffGroup{border-color:#374151}.darkTheme .noteItem{background:#111827;border-color:#374151}.darkTheme .noteAdd textarea{background:#111827;color:#e5e7eb;border-color:#4b5563}.darkTheme .meterReadings{border-color:#374151}.tariffGroup{margin-top:18px;padding-top:14px;border-top:1px solid #e5e7eb}.tariffGroupTitle{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}.tariffGrid{grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.tariffGrid label{display:flex;flex-direction:column;gap:6px}.tariffGrid label span{font-size:12px;font-weight:600}.tariffGrid input,.tariffGrid select{padding:10px 11px;border:1px solid #d1d5db;border-radius:8px;font:inherit}.billOption{display:flex;align-items:center;gap:10px;width:max-content;max-width:100%;margin:0 0 14px;padding:10px 13px;border:1px solid #d1d5db;border-radius:10px;background:#f8fafc;color:#17202a;font-size:13px;font-weight:700;cursor:pointer;box-sizing:border-box}.billOption input{width:18px;height:18px;margin:0;accent-color:#2563eb;cursor:pointer;flex:0 0 auto}.billOption:has(input:checked){border-color:#2563eb;background:#eff6ff}.darkTheme .billOption{background:#111827;border-color:#4b5563;color:#e5e7eb}.darkTheme .billOption:has(input:checked){border-color:#60a5fa;background:#172554}.meterUsage{margin:10px 0 14px}.usageValue{font-size:32px;font-weight:900;line-height:1.05;margin-bottom:2px}.usageValue .unit{font-size:14px;font-weight:600;color:#6b7280}.meterReadings{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid #e5e7eb}.meterReadings>div{display:flex;flex-direction:column;gap:5px}.meterReadings .label{font-size:12px}.meterReadings strong{font-size:16px}.splitAssumption{margin-top:10px;padding:9px 11px;border-radius:8px;background:#f3f4f6;font-size:12px;color:#4b5563}.darkTheme .splitAssumption{background:#111827;color:#d1d5db}.tariffDetails{background:#fff;border-radius:15px;padding:0;box-shadow:0 2px 8px rgba(0,0,0,.07);margin-top:15px;overflow:hidden}.tariffDetails summary{cursor:pointer;padding:16px 20px;font-size:16px;font-weight:800;list-style:none}.tariffDetails summary::-webkit-details-marker{display:none}.tariffDetails summary:after{content:"+";float:right;font-size:20px;line-height:1}.tariffDetails[open] summary:after{content:"−"}.tariffDetails[open] summary{border-bottom:1px solid #e5e7eb}.tariffDetails #tariffContent{padding:18px 20px 20px}.tariffIntro{color:#6b7280;font-size:13px;margin-bottom:12px}.tariffGroup{margin-top:18px;padding-top:14px;border-top:1px solid #e5e7eb}.tariffGroup:first-of-type{margin-top:0;border-top:0;padding-top:0}.tariffGroupTitle{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}.tariffField{display:flex;flex-direction:column;gap:6px}.tariffField span{font-size:13px;font-weight:700}.tariffField input{padding:10px;border:1px solid #d1d5db;border-radius:8px;font:inherit;font-weight:400}.tariffField small{font-size:11px;line-height:1.35;color:#6b7280;font-weight:400}.tariffActions{margin-top:18px}.darkTheme .tariffDetails{background:#1f2937}.darkTheme .tariffDetails[open] summary{border-color:#374151}.darkTheme .tariffGroup{border-color:#374151}.darkTheme .tariffField input{background:#111827;color:#e5e7eb;border-color:#4b5563}.trendNote{margin-top:10px;margin-bottom:0;font-size:11px}.header{position:relative}.headerIcon{position:absolute;right:22px;top:22px;border:0;background:rgba(255,255,255,.12);color:#fff;border-radius:10px;width:40px;height:40px;font-size:20px;cursor:pointer}.headerIcon.headerIconTheme{right:70px}.settingsMeter{margin:12px 0;border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#fff}.noteAdd{display:flex;gap:10px;align-items:flex-end;margin:14px 0}.noteAdd textarea{flex:1;resize:vertical;border:1px solid #d1d5db;border-radius:9px;padding:10px;font:inherit}.notesList{display:flex;flex-direction:column;gap:10px;margin-top:14px}.noteItem{position:relative;border:1px solid #e5e7eb;border-radius:10px;padding:12px 48px 12px 14px;background:#fff}.noteText{white-space:pre-wrap;line-height:1.45}.noteMeta{font-size:11px;color:#6b7280;margin-top:7px}.noteDelete{position:absolute;right:10px;top:10px}.generalField small{font-size:11px;color:#6b7280;font-weight:400;line-height:1.35}@media(max-width:650px){.noteAdd{flex-direction:column;align-items:stretch}.noteAdd .button{width:100%}}.settingsMeter>summary{font-size:16px;font-weight:800;cursor:pointer}.settingsGroup{margin-top:14px;padding-top:12px;border-top:1px solid #e5e7eb}.settingsTitle{font-weight:800;margin-bottom:10px}.timeLapse{font-size:13px;color:#6b7280;margin-top:5px}.hourlyHeader{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:8px}
+.hourlyDaySelect{padding:10px;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:inherit;font:inherit;font-size:14px}
+.hourlyGraph{height:340px}.hourlyBars{gap:5px}.hourlyBar{width:68%;max-width:42px}.hourlyDay{min-width:32px}.darkTheme .hourlyDaySelect{background:#111827;color:#e5e7eb;border-color:#4b5563}
+:root{--app-font:system-ui}body,.button,.tabBtn,input,select,textarea,button{font-family:var(--app-font,system-ui)}.proRataDetails{margin-top:18px;background:#fff;border-radius:15px;box-shadow:0 2px 8px rgba(0,0,0,.07);overflow:hidden}.proRataDetails summary{cursor:pointer;padding:16px 20px;font-size:16px;font-weight:800;list-style:none}.proRataDetails summary::-webkit-details-marker{display:none}.proRataDetails summary:after{content:"+";float:right;font-size:20px}.proRataDetails[open] summary:after{content:"−"}.proRataDetails>div{padding-left:20px;padding-right:20px}.proRataMeter{padding:14px 0;border-top:1px solid #e5e7eb}.proRataMeter h3{margin:0 0 10px;font-size:16px}.proRataRows{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px}.proRataRows>div{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #f0f1f3}.proRataRows strong{text-align:right}.proRataFormula{padding:12px 20px 18px;font-family:monospace;color:#4b5563;font-size:12px}.darkTheme .proRataDetails{background:#1f2937}.darkTheme .proRataMeter{border-color:#374151}.darkTheme .chart{background:#1f2937}.darkTheme .yAxis,.darkTheme .graphLabel{color:#9ca3af}.darkTheme .plotArea{border-color:#4b5563;background-image:linear-gradient(to bottom,#374151 1px,transparent 1px)}.darkTheme .settingsMeter{background:#1f2937;border-color:#374151}.darkTheme .billTotalBox{background:#111827;color:#e5e7eb}.darkTheme .historyTable th{background:#111827;color:#e5e7eb}.darkTheme .historyTable td,.darkTheme .historyTable th{border-color:#374151}.darkTheme .collectionForm{background:#111827;border-color:#4b5563}@media(max-width:650px){.proRataRows{grid-template-columns:1fr}.proRataRows strong{text-align:left}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+  <button id="themeToggle" class="headerIcon headerIconTheme" title="Toggle Theme" onclick="toggleTheme()">🌓</button>
+  <button id="notificationIcon" class="headerIcon" title="Notify People" onclick="showTab('notify')">🔔</button>
+  <span class="brandTitle">⚡ Electricity Monitor</span>
+  <p id="updated">Loading...</p>
+</div>
+<div class="tabBar">
+  <div class="tabs">
+    <button class="tabBtn tabBtnActive" id="tabBtn-summary"
+      onclick="showTab('summary')">Summary</button>
+    <button class="tabBtn" id="tabBtn-bill"
+      onclick="showTab('bill')">Estimated Bill</button>
+    <button class="tabBtn" id="tabBtn-history"
+      onclick="showTab('history')">Billing History</button>
+    <button class="tabBtn" id="tabBtn-settings"
+      onclick="showTab('settings')">Settings</button>
+    <button class="tabBtn" id="tabBtn-notes"
+      onclick="showTab('notes')">Notes</button>
+    <button class="tabBtn" id="tabBtn-add"
+      onclick="showTab('add')">Add Reading</button>
+</div>
+  <div id="billingMonthControl" class="billingMonthControl"></div>
+</div>
+<div id="tab-summary" class="tabPanel activeTab">
+  <div id="dashboardContent" class="loading">
+    Loading electricity data...
+  </div>
+</div>
+<div id="tab-bill" class="tabPanel">
+  <div id="billContent" class="loading">
+    Loading bill estimate...
+  </div>
+  <div class="panelIntro tariffMovedNote">Meter-specific tariff parameters are available in Settings.</div>
+</div>
+<div id="tab-settings" class="tabPanel">
+  <div class="card">
+    <div class="label">General Settings</div>
+    <div id="generalSettingsContent" class="settingsContent">Loading settings...</div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <div class="label">Meter Settings</div>
+    <div id="settingsContent" class="settingsContent">Loading meter settings...</div>
+  </div>
+</div>
+<div id="tab-notes" class="tabPanel">
+  <div class="card">
+    <div class="label">Operational Notes</div>
+    <p class="panelIntro">Keep a permanent record of meter changes, maintenance, unusual consumption, tariff changes and other operational events.</p>
+    <div class="noteAdd">
+      <textarea id="new-note" rows="3" placeholder="Write an operational note..."></textarea>
+      <button class="button" data-action onclick="addOperationalNote()">Add note</button>
+    </div>
+    <div id="notesContent" class="notesList">Loading notes...</div>
+  </div>
+</div>
+<div id="tab-history" class="tabPanel">
+  <div class="card">
+    <div class="label">Billing History</div>
+    <p class="panelIntro">Recorded units, bill and payment for each meter, by billing month.</p>
+    <div id="billingHistoryContent" class="tableWrap">Loading billing history...</div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <div class="label">Log a Meter Reading Collection</div>
+    <p class="panelIntro">The reading is collected any time near the 13th 5 PM cycle point. Log the meter, date, time and raw reading — the billing month and previous baseline are worked out automatically. Extended days are always calculated from collection dates and are not stored. Only open "Advanced" to correct month or baseline.</p>
+    <div class="collectionForm" id="collectionForm">
+      <label>Meter
+        <select id="col-meter">
+          <option value="METER 1">METER 1</option>
+          <option value="METER 2">METER 2</option>
+        </select>
+      </label>
+      <label>Collection Date<input type="date" id="col-date"></label>
+      <label>Collection Time<input type="time" id="col-time"></label>
+      <label>Raw Reading<input type="number" step="0.01" id="col-reading"></label>
+      <button class="button" data-action onclick="submitReadingCollection()">Save collection</button>
+      <details class="collectionAdvanced">
+        <summary>Advanced (override auto-calculated values)</summary>
+        <div class="collectionAdvancedGrid">
+          <label>Billing Month<input type="text" id="col-month" placeholder="auto"></label>
+          <label>Previous Baseline<input type="number" step="0.01" id="col-baseline" placeholder="auto"></label>
+        </div>
+      </details>
+    </div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <div class="label">Pro-Rata Collection Audit</div>
+    <p class="panelIntro">Actual units, daily velocity, billed units and the carry-forward balance deferred to next month, computed from the logged collections above.</p>
+    <div id="readingCollectionsContent" class="tableWrap">Loading collection records...</div>
+  </div>
+</div>
+<div id="tab-add" class="tabPanel">
+  <p class="panelIntro">Add meter readings. Existing records are read-only in the reading view.</p>
+  <div id="recordsContent" class="tableWrap">
+    Loading readings...
+  </div>
+</div>
+<div id="tab-notify" class="tabPanel">
+  <p class="panelIntro">
+    People on this list receive a Calendar notification every day at the configured reminder time, whether or not a reading has already been added.
+  </p>
+  <div id="notifyContent" class="tableWrap">
+    Loading notify list...
+  </div>
+</div>
+</div>
+<script>
+function captureActionLock(e){if(requestInProgress){e.preventDefault();e.stopImmediatePropagation();return false;}}
+document.addEventListener("submit",captureActionLock,true);
+
+function toggleTheme(){
+  document.body.classList.toggle("darkTheme");
+  localStorage.setItem("electricityTheme",document.body.classList.contains("darkTheme")?"dark":"light");
+}
+(function(){
+  if(localStorage.getItem("electricityTheme")==="dark") document.body.classList.add("darkTheme");
+})();
+let requestInProgress = false;
+let currentBillingMonth = null;
+let lastDashboardData = null;
+let assume5050 = true;
+function setUiBusy(busy){
+  requestInProgress = busy;
+  document.querySelectorAll('button, input[type="submit"], input[type="button"]').forEach(function(el){
+    const keep=el.classList.contains("tabBtn") || el.id==="themeToggle" || el.id==="notificationIcon";
+    if(!keep){el.disabled=busy;el.classList.toggle("actionBusy",busy);}
+  });
+  const control = document.getElementById('billingMonthControl');
+  const select = document.getElementById('billingMonthSelect');
+  if(control) control.classList.toggle('busy', busy);
+  if(select) select.disabled = busy;
+}
+function beginRequest(){
+  if(requestInProgress) return false;
+  setUiBusy(true);
+  return true;
+}
+function finishRequest(){
+  setUiBusy(false);
+}
+function isAuthExpiryError_(error){
+  const msg = (error && error.message) ? String(error.message) : String(error || "");
+  return /permission to access the requested document/i.test(msg) ||
+         /authorization is required/i.test(msg);
+}
+function handleAuthExpiry_(error){
+  if(!isAuthExpiryError_(error)) return false;
+  if(confirm("Your session has expired (this page was open a while). Reload to continue?")){
+    window.location.reload();
+  }
+  return true;
+}
+function googleScriptFail_(customHandler){
+  return function(error){
+    if(handleAuthExpiry_(error)) return;
+    customHandler(error);
+  };
+}
+function renderBillingMonthControl(months, selectedKey){
+  const host = document.getElementById('billingMonthControl');
+  if(!host) return;
+  if(!months || !months.length){
+    host.innerHTML = '';
+    return;
+  }
+  let html = '<span class="billingMonthLabel">Billing month</span>';
+  html += '<select id="billingMonthSelect" class="billingMonthSelect" onchange="changeBillingMonth(this.value)">';
+  months.forEach(function(m){
+    html += '<option value="' + escapeHtml(m.value) + '"' +
+      (m.key === selectedKey ? ' selected' : '') + '>' +
+      escapeHtml(m.label) + '</option>';
+  });
+  html += '</select>';
+  host.innerHTML = html;
+}
+function showTab(name){
+  document.querySelectorAll(".tabPanel").forEach(function(el){
+    el.classList.remove("activeTab");
+  });
+  document.getElementById("tab-" + name).classList.add("activeTab");
+  if(name==="settings"){loadGeneralSettings();loadSettings();}
+  document.querySelectorAll(".tabBtn").forEach(function(el){
+    el.classList.remove("tabBtnActive");
+  });
+  document.getElementById("tabBtn-" + name).classList.add("tabBtnActive");
+}
+function loadGeneralSettings(){
+  const el=document.getElementById("generalSettingsContent");
+  if(!el) return;
+  el.innerHTML='<div class="loading">Loading general settings...</div>';
+  google.script.run.withSuccessHandler(renderGeneralSettings).withFailureHandler(showError).getGeneralSettingsForClient();
+}
+function generalSettingNote_(key){
+  const notes={
+    "Goal Combined Units":"Combined monthly target for both meters. Example: 100.",
+    "Pro-Rata Standard Days":"Positive number of standard billing days used by the pro-rata normalization formula. Default: 30.",
+    "App Font":"Choose a sans-serif or serif font. Google fonts require internet access; device fonts work without it.",
+    "Billing Day":"1–28 is recommended. This is the calendar day on which the billing month begins.",
+    "Billing Hour":"0–23. Current setup uses 17 for 5 PM.",
+    "Billing Minute":"0–59.",
+    "Solar Start Hour":"0–23.",
+    "Solar Start Minute":"0–59.",
+    "Solar End Hour":"0–23.",
+    "Solar End Minute":"0–59.",
+    "Reminder Hour":"0–23.",
+    "Reminder Minute":"0–59."
+  };
+  return notes[key] || "";
+}
+function fontChoices_(){
+  return [
+    ["System UI","system-ui"],
+    ["Arial","Arial, sans-serif"],
+    ["Verdana","Verdana, sans-serif"],
+    ["Trebuchet MS","'Trebuchet MS', sans-serif"],
+    ["Open Sans","'Open Sans', sans-serif"],
+    ["Roboto","Roboto, sans-serif"],
+    ["Lato","Lato, sans-serif"],
+    ["Georgia","Georgia, serif"],
+    ["Merriweather","Merriweather, serif"],
+    ["Libre Baskerville","'Libre Baskerville', serif"]
+  ];
+}
+function fontSelect_(value){
+  let html='<select data-general-key="App Font">';
+  fontChoices_().forEach(function(f){html+='<option value="'+escapeHtml(f[1])+'" '+(f[1]===value?'selected':'')+'>'+escapeHtml(f[0])+'</option>';});
+  return html+'</select>';
+}
+function renderGeneralSettings(data){
+  const el=document.getElementById("generalSettingsContent");
+  if(!el) return;
+  let html='<div class="tariffIntro">These parameters are common to both meters. Changing them changes the dashboard calculations.</div><div class="tariffGrid">';
+  (data.rows||[]).forEach(function(r){
+    html+='<label class="tariffField generalField"><span>'+escapeHtml(r.key)+'</span>'+
+      (r.key==="App Font" ? fontSelect_(r.value) : '<input data-general-key="'+escapeHtml(r.key)+'" value="'+escapeHtml(r.value)+'">')+
+      '<small>'+escapeHtml(generalSettingNote_(r.key)||r.description||r.unit||"")+'</small></label>';
+  });
+  html+='</div><button class="button" data-action onclick="saveGeneralSettings()">Save general settings</button><div id="generalSaveMessage" class="panelIntro"></div>';
+  el.innerHTML=html;
+}
+function saveGeneralSettings(){
+  if(!beginRequest()) return;
+  const values={};
+  document.querySelectorAll("[data-general-key]").forEach(function(i){
+    values[i.getAttribute("data-general-key")]=i.value;
+  });
+  google.script.run.withSuccessHandler(function(){
+    finishRequest();
+    const m=document.getElementById("generalSaveMessage");
+    if(m) m.innerText="Saved.";
+    loadData(currentBillingMonth);
+  }).withFailureHandler(googleScriptFail_(function(e){finishRequest();alert("Could not save settings: "+e.message);})).saveGeneralSettingsFromClient(values);
+}
+function loadSettings(){
+  const el=document.getElementById("settingsContent");
+  if(!el) return;
+  el.innerHTML='<div class="loading">Loading meter settings...</div>';
+  google.script.run.withSuccessHandler(renderSettings).withFailureHandler(showError).getTariffSettingsForClient();
+}
+function renderSettings(data){
+  const el=document.getElementById("settingsContent");
+  if(!el) return;
+  let html='';
+  ["METER 1","METER 2"].forEach(function(meter){
+    const rows=(data.meters&&data.meters[meter])||[];
+    html+='<details class="settingsMeter" '+(meter==="METER 1"?'open':'')+'><summary>'+meter+'</summary>';
+    const groups=[
+      {title:"Billing setup",keys:["Effective From","Consumer Type","Tariff","Connection Type","Slab Mode"]},
+      {title:"Energy rates",match:/Rate$/},
+      {title:"Fixed charges",match:/Fixed$/},
+      {title:"Bill adjustments",keys:["FCA","QTA","FC Surcharge","NJ Surcharge","Electricity Duty","GST","TV Fee","Other Fixed"]},
+      {title:"Protected tariff",match:/^Protected /}
+    ];
+    groups.forEach(function(g){
+      const rr=rows.filter(function(r){return g.keys ? g.keys.indexOf(r.key)>=0 : g.match.test(r.key);});
+      if(!rr.length) return;
+      html+='<div class="settingsGroup"><div class="settingsTitle">'+escapeHtml(g.title)+'</div><div class="tariffGrid">';
+      rr.forEach(function(r){
+        html+='<label class="tariffField"><span>'+escapeHtml(r.key)+'</span><input data-meter="'+escapeHtml(meter)+'" data-setting-key="'+escapeHtml(r.key)+'" value="'+escapeHtml(r.value)+'"><small>'+escapeHtml(settingsNote_(r.key,r.description,r.unit))+'</small></label>';
+      });
+      html+='</div></div>';
+    });
+    html+='</details>';
+  });
+  html+='<button class="button" data-action onclick="saveSettings()">Save settings</button><div id="settingsSaveMessage" class="panelIntro"></div>';
+  el.innerHTML=html;
+}
+function settingsNote_(key,desc,unit){
+  const notes={
+    "Consumer Type":"Possible values: Protected or Unprotected.",
+    "Slab Mode":"Possible values: ALL_UNITS_AT_APPLICABLE_RATE or PROGRESSIVE.",
+    "Effective From":"Tariff effective date; use the date format used by the spreadsheet.",
+    "Connection Type":"Possible values include Single Phase and Three Phase.",
+    "FCA":"Rs/kWh adjustment; use 0 when not applicable.",
+    "QTA":"Rs/kWh adjustment; use 0 when not applicable.",
+    "FC Surcharge":"Rs/kWh adjustment; use 0 when not applicable.",
+    "NJ Surcharge":"Rs/kWh adjustment; use 0 when not applicable.",
+    "Electricity Duty":"Percentage, e.g. 1.5.",
+    "GST":"Percentage, e.g. 17.",
+    "TV Fee":"Fixed Rs/month charge; use 0 when not applicable.",
+    "Other Fixed":"Fixed Rs/month charge; use 0 when not applicable."
+  };
+  if(notes[key]) return notes[key];
+  if(/^Protected /.test(key)) return "Protected residential tariff value; verify the applicable rate or charge before changing it.";
+  if(/Rate$/.test(key)) return "Rs/kWh for this meter and slab.";
+  if(/Fixed$/.test(key)) return "Rs/month fixed charge for this meter and slab.";
+  return desc || (unit ? "Unit: "+unit+"." : "Enter the value applicable to this meter.");
+}
+function saveSettings(){
+  if(!beginRequest()) return;
+  const values={"METER 1":{},"METER 2":{}};
+  document.querySelectorAll("[data-setting-key]").forEach(function(i){
+    values[i.getAttribute("data-meter")][i.getAttribute("data-setting-key")]=i.value;
+  });
+  google.script.run.withSuccessHandler(function(){
+    finishRequest();
+    document.getElementById("settingsSaveMessage").innerText="Saved.";
+    loadData(currentBillingMonth);
+  }).withFailureHandler(googleScriptFail_(function(e){finishRequest();alert("Could not save settings: "+e.message);})).saveMeterSettingsFromClient(values);
+}
+function loadTariff(){
+  document.getElementById("tariffContent").innerHTML = '<div class="loading">Loading tariff settings...</div>';
+  google.script.run.withSuccessHandler(renderTariff).withFailureHandler(showError).getTariffSettingsForClient();
+}
+function renderTariff(settings){
+  const groups = [
+    {title:"Billing setup", keys:["Effective From","Consumer Type","Tariff","Connection Type","Slab Mode"]},
+    {title:"Energy rates", keys:["0-100 Rate","100-200 Rate","201-300 Rate","301-400 Rate","401-500 Rate","501-600 Rate","601-700 Rate","Above 700 Rate"]},
+    {title:"Fixed charges", keys:["0-100 Fixed","100-200 Fixed","201-300 Fixed","301-400 Fixed","401-500 Fixed","501-600 Fixed","601-700 Fixed","Above 700 Fixed"]},
+    {title:"Bill adjustments", keys:["FCA","QTA","FC Surcharge","NJ Surcharge","Electricity Duty","GST","TV Fee","Other Fixed"]}
+  ];
+  let html='<div class="tariffIntro">Edit the values below only when your tariff or applicable bill adjustments change.</div>';
+  groups.forEach(function(group){
+    const rows=settings.rows.filter(function(r){return group.keys.indexOf(r.key)!==-1;});
+    if(!rows.length) return;
+    html+='<div class="tariffGroup"><div class="tariffGroupTitle">'+escapeHtml(group.title)+'</div><div class="tariffGrid">';
+    rows.forEach(function(r){html+=tariffInput_(r);});
+    html+='</div></div>';
+  });
+  const known={};
+  groups.forEach(function(g){g.keys.forEach(function(k){known[k]=true;});});
+  const other=settings.rows.filter(function(r){return !known[r.key];});
+  if(other.length){
+    html+='<div class="tariffGroup"><div class="tariffGroupTitle">Other parameters</div><div class="tariffGrid">';
+    other.forEach(function(r){html+=tariffInput_(r);});
+    html+='</div></div>';
+  }
+  html+='<div class="tariffActions"><button class="button" data-action onclick="saveTariff()">Save tariff parameters</button><div id="tariffSaveMessage" class="panelIntro"></div></div>';
+  document.getElementById("tariffContent").innerHTML=html;
+}
+function tariffInput_(r){
+  const note=tariffNote_(r.key,r.description,r.unit);
+  return '<label class="tariffField"><span>'+escapeHtml(r.key)+'</span>'+
+    '<input data-tariff-key="'+escapeHtml(r.key)+'" value="'+escapeHtml(r.value)+'">'+
+    '<small>'+escapeHtml(note)+'</small></label>';
+}
+function tariffNote_(key,description,unit){
+  const notes={
+    "Effective From":"Date in YYYY-MM-DD format.",
+    "Consumer Type":"Possible values: Unprotected or Protected. This application is configured for Unprotected.",
+    "Tariff":"Tariff category/name, e.g. Residential A-1.",
+    "Connection Type":"Use the connection type applicable to the meter, e.g. Single Phase or Three Phase.",
+    "Slab Mode":"Possible value in this calculator: ALL_UNITS_AT_APPLICABLE_RATE.",
+    "Electricity Duty":"Percentage value; enter a number such as 1.5 for 1.5%.",
+    "GST":"Percentage value; enter a number such as 17 for 17%.",
+    "FCA":"Adjustment in Rs/kWh. Use 0 when no FCA is applicable.",
+    "QTA":"Adjustment in Rs/kWh. Use 0 when no QTA is applicable.",
+    "FC Surcharge":"Adjustment in Rs/kWh. Use 0 when none is applicable.",
+    "NJ Surcharge":"Adjustment in Rs/kWh. Use 0 when none is applicable.",
+    "TV Fee":"Monthly amount in Rs; use 0 when not applicable.",
+    "Other Fixed":"Monthly fixed amount in Rs; use 0 when none applies."
+  };
+  if(notes[key]) return notes[key];
+  if(/Rate$/.test(key)) return 'Energy rate in Rs/kWh; enter a non-negative numeric value.';
+  if(/Fixed$/.test(key)) return 'Fixed monthly charge in Rs for this consumption range; enter a non-negative numeric value.';
+  return description || (unit ? 'Expected unit: '+unit+'.' : 'Enter the value applicable to this bill calculation.');
+}
+function saveTariff(){
+  if(!beginRequest()) return;
+  const inputs = document.querySelectorAll('[data-tariff-key]');
+  const values = {};
+  inputs.forEach(function(i){ values[i.getAttribute('data-tariff-key')] = i.value; });
+  google.script.run
+    .withSuccessHandler(function(){
+      document.getElementById('tariffSaveMessage').innerText = 'Saved. Bill calculations now use the updated parameters.';
+      finishRequest();
+      loadData(currentBillingMonth);
+    })
+    .withFailureHandler(googleScriptFail_(function(e){finishRequest();alert("Could not save tariff: "+e.message);}))
+    .saveTariffSettingsFromClient(values);
+}
+function loadData(selectedBillingMonth){
+  if(!beginRequest()) return;
+  if(selectedBillingMonth !== undefined && selectedBillingMonth !== null){
+    currentBillingMonth = selectedBillingMonth;
+  }
+  document.getElementById("dashboardContent").innerHTML = '<div class="loading">Loading...</div>';
+  google.script.run
+    .withSuccessHandler(renderAll)
+    .withFailureHandler(showError)
+    .getPageData(selectedBillingMonth !== undefined ? selectedBillingMonth : currentBillingMonth);
+}
+function renderAll(data){
+  if(data && data.dashboard && data.dashboard.appFont) document.documentElement.style.setProperty("--app-font",data.dashboard.appFont);
+  lastDashboardData = data.dashboard || null;
+  if(lastDashboardData) lastDashboardData.isOwner=!!data.isOwner;
+  assume5050 = !!(data.dashboard && data.dashboard.isCurrentBillingMonth);
+  if(data.dashboard && data.dashboard.error){
+    finishRequest();
+    showError({message:data.dashboard.error});
+    return;
+  }
+  const months = data.billingMonths || [];
+  if(data.dashboard){
+    data.dashboard.availableBillingMonths = months;
+    const selectedMonth = months.find(function(m){
+      return m.key === data.dashboard.availableMonthKey;
+    });
+    if(selectedMonth) currentBillingMonth = selectedMonth.value;
+    renderBillingMonthControl(months, data.dashboard.availableMonthKey);
+  }
+  renderDashboard(data.dashboard);
+  renderBill(data.dashboard, null);
+  renderRecords(data.records || [], !!data.isOwner);
+  renderNotify(data.notify || []);
+  renderNotes(data.notes || []);
+  renderHistory(data.billingHistory || [], data.readingCollections || []);
+  finishRequest();
+  if(assume5050 && data.dashboard && !data.dashboard.empty){
+    loadAssumed5050Bill();
+  }
+}
+function showError(error){
+  finishRequest();
+  if(handleAuthExpiry_(error)) return;
+  const select = document.getElementById('billingMonthSelect');
+  if(select && currentBillingMonth) select.value = String(currentBillingMonth);
+  document.getElementById("dashboardContent").innerHTML =
+    '<div class="error">' + escapeHtml(error.message) + '</div>';
+}
+function num(value){
+  if(value === "" || value === null || typeof value === "undefined"){
+    return "—";
+  }
+  return Number(value).toFixed(2);
+}
+function money(value){
+  if(value === "" || value === null || typeof value === "undefined"){
+    return "—";
+  }
+  return "Rs " + Number(value).toLocaleString("en-PK",{
+    minimumFractionDigits:0,
+    maximumFractionDigits:0
+  });
+}
+function formatRelativeTime(timestamp){
+  if(!timestamp) return "";
+  const diffMs = Date.now() - timestamp;
+  const diffMin = Math.round(diffMs / 60000);
+  if(diffMin < 1) return "just now";
+  if(diffMin < 60) return diffMin + " min ago";
+  const diffHours = Math.round(diffMs / 3600000);
+  if(diffHours < 72){
+    return diffHours + (diffHours === 1 ? " hour ago" : " hours ago");
+  }
+  const diffDays = Math.round(diffMs / 86400000);
+  return diffDays + (diffDays === 1 ? " day ago" : " days ago");
+}
+function escapeHtml(value){
+  if(value === null || typeof value === "undefined") return "";
+  return String(value)
+    .replace(/&/g,"&amp;")
+    .replace(/"/g,"&quot;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;");
+}
+function metric(label,value,large){
+  return '<div class="metric">' +
+    '<div class="metricLabel">' + label + '</div>' +
+    '<div class="metricValue' + (large ? ' large' : '') + '">' +
+      value +
+    '</div>' +
+  '</div>';
+}
+function changeBillingMonth(value){
+  if(!beginRequest()) return;
+  document.getElementById("dashboardContent").innerHTML = '<div class="loading">Loading...</div>';
+  google.script.run
+    .withSuccessHandler(renderAll)
+    .withFailureHandler(showError)
+    .getPageData(value);
+}
+function updateBillingTimeLapse(days){const el=document.getElementById("billingTimeLapse");if(!el)return;el.textContent="Days: "+Number(days||0).toFixed(1);}
+function renderDashboard(data){
+  if(!data) return;
+  if(data.empty){
+    document.getElementById("updated").innerText = "";
+    document.getElementById("dashboardContent").innerHTML =
+      '<div class="card">' + escapeHtml(data.message) + '</div>';
+    return;
+  }
+  document.getElementById("updated").innerText =
+    "Latest reading: " + data.latestDate +
+    " (" + formatRelativeTime(data.latestTimestamp) + ")";
+  updateBillingTimeLapse(data.elapsedDays);
+  const progress = Math.max(
+    0,
+    Math.min(100, Number(data.billingProgress || 0))
+  );
+  const share1 = Number(data.meter1Share || 0);
+  const share2 = Number(data.meter2Share || 0);
+  let html = "";
+  html += '<div class="card billingTop">';
+  html += '<div class="billingHeader">';
+  html += '<div>';
+  html += '<div class="summaryMonth">' +
+    escapeHtml(data.billingMonth) + '</div>';
+  html += '<div class="summaryPeriod">' +
+    escapeHtml(data.billingStart) + ' → ' +
+    escapeHtml(data.billingEnd) + '</div>';
+  html += '<div id="billingTimeLapse" class="timeLapse">Days: ' + Number(data.elapsedDays||0).toFixed(1) + '</div>';
+  html += '</div>';
+  html += '</div>';
+  html += '<div class="progressTrack">';
+  html += '<div class="progressFill" style="width:' +
+    progress + '%"></div>';
+  if(data.meterChangeEvent && data.meterChangeEvent.monthProgress !== null){
+    const cp = Number(data.meterChangeEvent.monthProgress);
+    html += '<div class="changeMarker" style="left:' + cp + '%" title="Estimated meter change: ' +
+      escapeHtml(data.meterChangeEvent.estimatedAt) + '"></div>';
+  }
+  html += '</div>';
+  html += '<div class="progressMeta">';
+  html += '<span>' + progress.toFixed(0) +
+    '% of billing period</span>';
+  if(data.meterChangeEvent){
+    html += '<span>Meter change marker: ' + escapeHtml(data.meterChangeEvent.estimatedAt) + '</span>';
+  }
+  html += '</div>';
+  html += '</div>';
+  html += '<div class="mainGrid">';
+  html += '<div class="card totalCard">';
+  html += '<div class="label">TOTAL USAGE</div>';
+  const combinedTotal = (data.totalConsumptionCombined !== undefined && data.totalConsumptionCombined !== null)
+    ? data.totalConsumptionCombined
+    : data.billingTotal;
+  html += '<div class="totalUsage">' +
+    num(combinedTotal) +
+    ' <span class="unit">kWh</span></div>';
+  html += '<div class="usageFormula">' +
+    num(data.billingTotal) + ' + ' + num((data.carryForwardNew||0)+(data.carryForwardOld||0)) +
+  '</div>';
+  html += '<div class="metricGrid">';
+  html += metric("Last 24 hours",
+    num(data.last24Total) + ' <span class="unit">kWh</span>', true);
+  html += metric("Daily average",
+    num(data.goalPace.dailyAverage) + ' <span class="unit">kWh/d</span>', true);
+  html += metric("Remaining to goal",
+    data.goalPace.remainingUnits > 0
+      ? num(data.goalPace.remainingUnits) + ' <span class="unit">kWh</span>'
+      : 'Goal exceeded', true);
+  html += metric("Required daily average",
+    data.goalPace.requiredDailyAverage === ''
+      ? (data.goalPace.overGoal ? 'Over goal' : '—')
+      : num(data.goalPace.requiredDailyAverage) + ' <span class="unit">kWh/d</span>', true);
+  html += '</div>';
+  var paceNote = data.goalPace.overGoal
+    ? 'The combined goal has already been exceeded by ' + num(Math.abs(data.goalPace.remainingUnits)) + ' kWh.'
+    : 'To finish at or below the goal, keep remaining consumption at or below ' +
+      (data.goalPace.requiredDailyAverage === '' ? '0' : num(data.goalPace.requiredDailyAverage)) + ' kWh/d.';
+  html += '<div class="panelIntro trendNote">' + paceNote + '</div>';
+  html += '<div class="billBox">';
+  html += '<div class="label">' + (data.isCurrentBillingMonth ? 'BILL ESTIMATE' : 'BILL CALCULATION') + '</div>';
+  html += '<div class="billRow">';
+  html += '<span>' + (data.isCurrentBillingMonth ? 'Projected estimate' : 'Calculated bill') + '</span>';
+  html += '<strong>' + money(data.projectedBill5050Total !== undefined ? data.projectedBill5050Total : data.projectedBillTotal) + '</strong>';
+  html += '</div>';
+  html += '<div class="billRow">';
+  html += '<span>Projected consumption</span>';
+  html += '<strong>' + num(data.projectedTotal) + ' <span class="unit">kWh</span></strong>';
+  html += '</div>';
+  html += '<div class="billRow">';
+  html += '<span>Projected cost / unit</span>';
+  html += '<strong>' + money(data.effectiveCurrentRate) +
+    ' / <span class="unit">kWh</span></strong>';
+  html += '</div>';
+  html += '</div>';
+  html += '<div class="split">';
+  html += '<div class="label">METER SPLIT</div>';
+  html += '<div class="splitBar">';
+  html += '<div class="split1" style="width:' + share1 + '%"></div>';
+  html += '<div class="split2" style="width:' + share2 + '%"></div>';
+  html += '</div>';
+  html += '<div class="splitLegend">';
+  html += '<span>METER 1: ' + num(data.billingNew) +
+    ' <span class="unit">kWh</span> (' + share1.toFixed(0) + '%)</span>';
+  html += '<span>METER 2: ' + num(data.billingOld) +
+    ' <span class="unit">kWh</span> (' + share2.toFixed(0) + '%)</span>';
+  html += '</div>';
+  html += '</div>';
+  html += '</div>';
+  html += '<div class="meterColumn">';
+  html += meterCard(
+    "METER 1",
+    data.currentNew,
+    data.billingNew,
+    data.averageNew,
+    data.meter1Share,
+    data.currentBillNew,
+    "meter1",
+    data.initialNew,
+    data.isCurrentBillingMonth,
+    data.carryForwardNew,
+    data.totalConsumptionNew
+  );
+  html += meterCard(
+    "METER 2",
+    data.currentOld,
+    data.billingOld,
+    data.averageOld,
+    data.meter2Share,
+    data.currentBillOld,
+    "meter2",
+    data.initialOld,
+    data.isCurrentBillingMonth,
+    data.carryForwardOld,
+    data.totalConsumptionOld
+  );
+  html += '</div>';
+  html += '</div>';
+  html += renderDailyChart(data.daily || []);
+  html += '<div id="hourlyChartHost">';
+  html += renderHourlyChart(data.hourly || [], data.hourlyDay || '');
+  html += '</div>';
+  document.getElementById("dashboardContent").innerHTML = html;
+}
+function meterCard(title,current,billing,average,share,bill,css,initialReading,isCurrentBillingMonth,carryForward,totalWithCarry){
+  const total = (totalWithCarry !== undefined && totalWithCarry !== null && totalWithCarry !== '')
+    ? totalWithCarry
+    : ((billing === '' || billing === null ? 0 : Number(billing)) + (carryForward ? Number(carryForward) : 0));
+  const carry = carryForward ? Number(carryForward) : 0;
+  return '<div class="card meterCard '+css+'">'+
+    '<div class="label">'+title+'</div>'+
+    '<div class="meterUsage">'+
+      '<div class="usageValue">'+num(total)+' <span class="unit">kWh</span></div>'+
+      '<div class="usageFormula">'+num(billing)+' + '+num(carry)+'</div>'+
+    '</div>'+
+    '<div class="metricGrid">'+
+      metric("Average",num(average)+' <span class="unit">kWh/d</span>',false)+
+      metric(isCurrentBillingMonth ? "Estimated Bill" : "Calculated Bill", money(bill), false)+
+    '</div>'+
+    '<div class="meterReadings">'+
+      '<div><span class="label">Current meter reading</span><strong>'+num(current)+' <span class="unit">kWh</span></strong></div>'+
+      '<div><span class="label">Initial reading this month</span><strong>'+num(initialReading)+' <span class="unit">kWh</span></strong></div>'+
+    '</div>'+
+  '</div>';
+}
+function changeHourlyDay(value){
+  if(!lastDashboardData) return;
+  if(!value) return;
+  const selected = lastDashboardData.hourlyDays || [];
+  if(!selected.some(function(d){return d.value === value;})) return;
+  if(window.__hourlyChartTimer) clearTimeout(window.__hourlyChartTimer);
+  const select = document.querySelector('.hourlyDaySelect');
+  if(select) select.value = value;
+  const holder = document.getElementById("hourlyChartHost");
+  if(holder) holder.innerHTML = '<div class="loading">Loading hourly data...</div>';
+  google.script.run
+    .withSuccessHandler(function(hourly){
+      if(holder) holder.innerHTML = renderHourlyChart(hourly || [], value);
+    })
+    .withFailureHandler(function(err){
+      if(handleAuthExpiry_(err)) return;
+      if(holder) holder.innerHTML = '<div class="error">' + escapeHtml(err.message) + '</div>';
+    })
+    .getHourlyChartForDay(value);
+}
+function renderHourlyChart(hourly, selectedDay){
+  let html = '<div class="section"><div class="chart">';
+  html += '<div class="hourlyHeader">';
+  html += '<div class="label">Hourly Consumption</div>';
+  html += '<select class="hourlyDaySelect" onchange="changeHourlyDay(this.value)">';
+ (function() {
+    var days = (lastDashboardData.hourlyDays || []).slice();
+    if (days.length > 1) {
+        days.push(days.shift());
+    }
+    days.reverse().forEach(function(d){
+        html += '<option value="' + escapeHtml(d.value) + '"' + (d.value === selectedDay ? ' selected' : '') + '>' + escapeHtml(d.label) + '</option>';
+    });
+})();
+  html += '</select></div>';
+  let maximum = 0;
+  hourly.forEach(function(d){
+    if(d.total !== "" && d.total !== null) maximum = Math.max(maximum, Number(d.total));
+  });
+  if(maximum <= 0) maximum = 1;
+  const chartMax = niceHourlyMaximum_(maximum);
+  const ySteps = chartMax <= 0.6 ? 3 : (chartMax <= 1 ? 4 : 5);
+  html += '<div class="graph hourlyGraph">';
+  html += '<div class="yAxis">';
+  for(let i=ySteps;i>=0;i--){
+    html += '<div>' + formatAxisNumber(chartMax * i / ySteps) + '</div>';
+  }
+  html += '</div><div class="plotArea"><div class="graphBars hourlyBars">';
+  hourly.forEach(function(d){
+    const a = d.newMeter === "" ? 0 : Number(d.newMeter);
+    const b = d.oldMeter === "" ? 0 : Number(d.oldMeter);
+    const total = d.total === "" ? a + b : Number(d.total || 0);
+    const height = total > 0 ? Math.max(1,total / chartMax * 100) : 0;
+    html += '<div class="graphDay hourlyDay">';
+    if(total > 0){
+      html += '<div class="graphBar hourlyBar" style="height:' + height + '%" title="' +
+        escapeHtml(d.label) + ': ' + num(total) + ' kWh">';
+      const bPct = total > 0 ? (b / total * 100) : 0;
+      const aPct = total > 0 ? (a / total * 100) : 0;
+      if(b > 0) html += '<div class="graphSegment graphSegment2" style="flex:' + bPct + '"></div>';
+      if(a > 0) html += '<div class="graphSegment graphSegment1" style="flex:' + aPct + '"></div>';
+      html += '<div class="graphValue">' + num(total) + '</div>';
+      html += '</div>';
+    }
+    html += '<div class="graphLabel">' + escapeHtml(d.label) + '</div>';
+    html += '</div>';
+  });
+  html += '</div></div></div></div>';
+  return html;
+}
+function renderDailyChart(daily){
+  let html = '';
+  html += '<div class="section">';
+  html += '<div class="chart">';
+  html += '<div class="label">Daily Consumption — 5 PM to 5 PM</div>';
+  html += '<div class="chartLegend">';
+  html += '<div class="legendItem"><div class="legendBox legend1"></div>METER 1</div>';
+  html += '<div class="legendItem"><div class="legendBox legend2"></div>METER 2</div>';
+  html += '</div>';
+  let maximum = 0;
+  daily.forEach(function(d){
+    maximum = Math.max(
+      maximum,
+      d.total === "" ? 0 : Number(d.total)
+    );
+  });
+  if(maximum <= 0) maximum = 1;
+  const chartMax = niceChartMaximum(maximum);
+  const ySteps = Math.max(1, Math.round(chartMax / 2));
+  html += '<div class="graph">';
+  html += '<div class="yAxis">';
+  for(let i=ySteps;i>=0;i--){
+    html += '<div>' +
+      formatAxisNumber(chartMax * i / ySteps) +
+      '</div>';
+  }
+  html += '</div>';
+  html += '<div class="plotArea">';
+  html += '<div class="graphBars">';
+  daily.forEach(function(d){
+    const chartLabel = String(d.label || '').split(/\s+/)[0];
+    const a = d.newMeter === "" ? 0 : Number(d.newMeter);
+    const b = d.oldMeter === "" ? 0 : Number(d.oldMeter);
+    const total = a + b;
+    const bPct = total > 0 ? (b / total * 100) : 0;
+    const aPct = total > 0 ? (a / total * 100) : 0;
+    if(total <= 0){
+      html += '<div class="graphDay">' +
+        '<div class="graphLabel">' +
+        escapeHtml(chartLabel) +
+        '</div></div>';
+      return;
+    }
+    const height = Math.max(1,total / chartMax * 100);
+    const tipText = escapeHtml(d.period || d.label || '') + ' — METER 1: ' + num(a) + ' kWh, METER 2: ' + num(b) + ' kWh, Total: ' + num(total) + ' kWh';
+    html += '<div class="graphDay">';
+    html += '<div class="graphBar graphBarClickable" style="height:' +
+      height + '%" title="' + tipText + '" onclick="changeHourlyDay(' + "'" + escapeHtml(d.date) + "'" + ')">';
+    html += '<div class="graphValue">' +
+      num(total) + '</div>';
+    if(b > 0){
+      html += '<div class="graphSegment graphSegment2" style="flex:' + bPct + '"></div>';
+    };
+    if(a > 0){
+      html += '<div class="graphSegment graphSegment1" style="flex:' + aPct + '"></div>';
+    };
+    html += '<div class="graphLabel">' +
+      escapeHtml(chartLabel) + '</div>';
+    html += '</div>';
+    html += '</div>';
+  });
+  html += '</div></div></div></div>';
+  return html;
+}
+function niceChartMaximum(value){
+  value=Number(value)||0;
+  if(value<=0) return 2;
+  if(value<=10) return Math.ceil(value/2)*2;
+  return Math.ceil(value/2)*2;
+}
+function niceHourlyMaximum_(value){
+  value=Number(value)||0;
+  if(value<=0) return 0.6;
+  const target=Math.max(0.6,value*1.08);
+  const magnitude=Math.pow(10,Math.floor(Math.log10(target)));
+  const normalized=target/magnitude;
+  let step;
+  if(normalized<=1) step=1;
+  else if(normalized<=2) step=2;
+  else if(normalized<=5) step=5;
+  else step=10;
+  return step*magnitude;
+}
+function formatAxisNumber(value){
+  if(value >= 100) return Math.round(value);
+  if(value >= 10) return Number(value).toFixed(0);
+  return Number(value).toFixed(value%1===0 ? 0 : 1);
+}
+function renderBill(data,split){
+  if(!data || data.empty){
+    document.getElementById("billContent").innerHTML='<div class="billInfo">No bill estimate available yet.</div>';
+    return;
+  }
+  const details=data.isCurrentBillingMonth ? (assume5050 ? data.projectedBillDetails : data.projectedBillActualDetails) : data.currentBillDetails;
+  let p1=details.meter1, p2=details.meter2;
+  let total=(p1.total||0)+(p2.total||0);
+  let units=data.isCurrentBillingMonth ? Number(data.projectedTotal||0) : Number(data.billingTotal||0);
+  if(split && split.meter1 && split.meter2){
+    p1=split.meter1; p2=split.meter2; total=split.total; units=split.units;
+  }
+  const heading=data.isCurrentBillingMonth?'Projected month bill calculation':'Billing month calculation';
+  const unitsLabel=data.isCurrentBillingMonth?'Projected consumption':'Recorded consumption';
+  let html='<div class="billInfo">';
+  html+='<h2>'+heading+'</h2>';
+  if(data.isCurrentBillingMonth){
+    html+='<label class="billOption"><input type="checkbox" id="assume5050" '+(assume5050?'checked':'')+' onchange="toggleAssume5050(this.checked)"> Assume 50/50 split</label>';
+  }
+  html+='<div class="billMeta">'+unitsLabel+': <strong>'+num(units)+' <span class="unit">kWh</span></strong></div>';
+  html+=detailedBillBlock("METER 1",p1);
+  html+=detailedBillBlock("METER 2",p2);
+  html+='<div class="billTotalBox"><span>'+(data.isCurrentBillingMonth?'Combined projected bill':'Combined bill')+'</span><strong>'+money(total)+'</strong></div>';
+  if(split) html+='<div class="splitAssumption">Both meters are calculated as 50% of the total projected consumption.</div>';
+  html+=proRataBlock_(data);
+  html+='<div class="note">Meter 1 and Meter 2 are calculated independently. The combined amount is only the sum of the two separate bills.</div>';
+  html+='</div>';
+  document.getElementById("billContent").innerHTML=html;
+}
+function loadAssumed5050Bill(){
+  if(!lastDashboardData || !assume5050) return;
+  if(!beginRequest()) return;
+  document.getElementById("billContent").innerHTML='<div class="billInfo"><div class="loading">Calculating 50/50 split...</div></div>';
+  google.script.run
+    .withSuccessHandler(function(split){
+      finishRequest();
+      if(lastDashboardData && split && split.total!==undefined){
+        lastDashboardData.projectedBillTotal=Number(split.total||0);
+        lastDashboardData.projectedBill5050Total=Number(split.total||0);
+      }
+      renderDashboard(lastDashboardData);
+      renderBill(lastDashboardData,split);
+    })
+    .withFailureHandler(function(err){
+      assume5050=false;
+      finishRequest();
+      renderBill(lastDashboardData,null);
+    })
+    .getAssumed5050Bill(currentBillingMonth);
+}
+function toggleAssume5050(checked){
+  if(!lastDashboardData) return;
+  if(checked){
+    assume5050=true;
+    loadAssumed5050Bill();
+    return;
+  }
+  assume5050=false;
+  renderBill(lastDashboardData,null);
+}
+function proRataBlock_(data){
+  const p=data && data.proRata;
+  if(!p) return '';
+  const rows=[
+    ['Previous billed baseline','baseline','kWh'],
+    ['Present live reading','present','kWh'],
+    ['Total actual units','actualUnits','kWh'],
+    ['Extended interval','extendedDays','days'],
+    ['Daily velocity average','dailyAverage','kWh/d'],
+    ['Standard cycle','standardDays','days'],
+    ['Normalized billed units','billedUnits','kWh'],
+    ['Adjusted present reading','adjustedPresent','kWh'],
+    ['Carry-forward balance','carryForward','kWh']
+  ];
+  function meter(title,x){
+    if(!x) return '<div class="proRataMeter"><h3>'+title+'</h3><div class="panelIntro">Insufficient baseline/present reading data for this meter.</div></div>';
+    let h='<div class="proRataMeter"><h3>'+title+'</h3><div class="proRataRows">';
+    rows.forEach(function(r){
+      const v=x[r[1]];
+      h+='<div><span>'+escapeHtml(r[0])+'</span><strong>'+num(v)+' <span class="unit">'+r[2]+'</span></strong></div>';
+    });
+    h+='</div></div>'; return h;
+  }
+  return '<details class="proRataDetails"><summary>Pro-Rata normalization</summary>'+
+    '<div class="tariffIntro">Applies the supplied deterministic formula: actual units ÷ extended days × standard cycle, rounded down to whole billed units. This is an audit view and does not replace the existing projected-bill calculation.</div>'+
+    meter('METER 1',p.meter1)+meter('METER 2',p.meter2)+
+    '<div class="proRataFormula">Billed Units = floor((Present Reading − Previous Billed Baseline) ÷ Extended Days × Standard Days)</div>'+
+    '</details>';
+}
+function detailedBillBlock(title, bill){
+  let html = '<div class="billMeterBlock">';
+  html += '<h3>' + escapeHtml(title) + ' — ' + num(bill.units) + ' <span class="unit">kWh</span></h3>';
+  html += '<div class="billSteps">';
+  (bill.steps || []).forEach(function(step){
+    html += '<div class="billStep' + (step.total ? ' billStepTotal' : '') + '">';
+    html += '<div class="billStepLabel">' + escapeHtml(step.label) + '</div>';
+    html += '<div class="billStepFormula">' + escapeHtml(step.formula) + '</div>';
+    html += '<div class="billStepAmount">' + money(step.amount) + '</div>';
+    html += '</div>';
+  });
+  html += '</div></div>';
+  return html;
+}
+function billTable(rows){
+  let html =
+    '<table class="billTable"><thead><tr>' +
+    '<th>Item</th><th>METER 1</th><th>METER 2</th><th>Total</th>' +
+    '</tr></thead><tbody>';
+  rows.forEach(function(r){
+    html += '<tr>' +
+      '<td>' + escapeHtml(r[0]) + '</td>' +
+      '<td>' + (typeof r[1] === "number" ? num(r[1]) : r[1]) + '</td>' +
+      '<td>' + (typeof r[2] === "number" ? num(r[2]) : r[2]) + '</td>' +
+      '<td>' + (typeof r[3] === "number" ? num(r[3]) : r[3]) + '</td>' +
+      '</tr>';
+  });
+  html += '</tbody></table>';
+  return html;
+}
+function renderRecords(records,isOwner){
+  let html = '<table>';
+  html += '<thead><tr>' +
+    '<th>Date</th>' +
+    '<th>Time</th>' +
+    '<th>Meter 1</th>' +
+    '<th>Meter 2</th>' +
+    '<th>Inverter Reading (kW)</th>' +
+    '<th>Actions</th>'+
+    '</tr></thead><tbody>';
+  html += '<tr class="addRow">' +
+    '<td><input type="date" id="new-date"></td>' +
+    '<td><input type="time" id="new-time"></td>' +
+    '<td><input type="number" step="0.01" id="new-newMeter"></td>' +
+    '<td><input type="number" step="0.01" id="new-oldMeter"></td>' +
+    '<td><input type="number" step="0.01" id="new-load"></td>' +
+    '<td><button class="smallButton addBtn" data-action title="Add reading" onclick="addRow()">➕</button></td>' +
+    '</tr>';
+  records.forEach(function(r){
+    const rn = r.rowNumber;
+    html += '<tr id="recordRow-' + rn + '">' +
+      '<td><input disabled type="date" id="date-' + rn +
+      '" value="' + escapeHtml(r.date) + '"></td>' +
+      '<td><input disabled type="time" id="time-' + rn +
+      '" value="' + escapeHtml(r.time) + '"></td>' +
+      '<td><input disabled type="number" step="0.01" id="newMeter-' + rn +
+      '" value="' + escapeHtml(r.newMeter) + '"></td>' +
+      '<td><input disabled type="number" step="0.01" id="oldMeter-' + rn +
+      '" value="' + escapeHtml(r.oldMeter) + '"></td>' +
+      '<td><input disabled type="number" step="0.01" id="loadKw-' + rn + '" value="' + escapeHtml(r.loadKw || "") + '"></td>' +
+      (isOwner ? '<td><button class="smallButton editBtn" title="Edit" onclick="editRow('+rn+')">✏️</button><button class="smallButton deleteBtn" title="Delete" onclick="deleteRow('+rn+')">🗑️</button></td>' : '')+
+    '</tr>';
+  });
+  html += '</tbody></table>';
+  if(!records.length){
+    html += '<div style="padding:20px;color:#6b7280;text-align:center">' +
+      'No readings yet — add the first one above.' +
+      '</div>';
+  }
+  document.getElementById("recordsContent").innerHTML = html;
+  const now = new Date();
+  const pad = n => n < 10 ? "0" + n : String(n);
+  document.getElementById("new-date").value =
+    now.getFullYear() + "-" +
+    pad(now.getMonth()+1) + "-" +
+    pad(now.getDate());
+  document.getElementById("new-time").value =
+    pad(now.getHours()) + ":" + pad(now.getMinutes());
+  if(records.length){
+    const latest = records[0];
+    const nm = document.getElementById("new-newMeter");
+    const om = document.getElementById("new-oldMeter");
+    if(nm && latest.newMeter !== "" && latest.newMeter !== null) nm.value = latest.newMeter;
+    if(om && latest.oldMeter !== "" && latest.oldMeter !== null) om.value = latest.oldMeter;
+  }
+}
+function addRow(){
+  if(!beginRequest()) return;
+  const record={
+    date:document.getElementById("new-date").value,
+    time:document.getElementById("new-time").value,
+    newMeter:document.getElementById("new-newMeter").value,
+    oldMeter:document.getElementById("new-oldMeter").value,
+    loadKw:document.getElementById("new-load").value
+  };
+  if(!record.date||!record.time){finishRequest();alert("Date and time are required.");return;}
+  google.script.run.withSuccessHandler(function(){finishRequest();loadData(currentBillingMonth);}).withFailureHandler(googleScriptFail_(function(error){finishRequest();alert("Could not add reading: "+error.message);})).saveRecord(record);
+}
+function editRow(rowNumber){
+  if(!lastDashboardData || !lastDashboardData.isOwner) return;
+  ["date","time","newMeter","oldMeter","loadKw"].forEach(function(prefix){
+    const el=document.getElementById(prefix+"-"+rowNumber);
+    if(el) el.disabled=false;
+  });
+  const row=document.getElementById("recordRow-"+rowNumber);
+  if(row) row.querySelector(".editBtn").outerHTML='<button class="smallButton saveBtn" title="Save" onclick="saveEditedRow('+rowNumber+')">💾</button>';
+}
+function saveEditedRow(rowNumber){
+  if(!lastDashboardData || !lastDashboardData.isOwner) return;
+  if(!beginRequest()) return;
+  const record={
+    rowNumber:rowNumber,
+    date:document.getElementById("date-"+rowNumber).value,
+    time:document.getElementById("time-"+rowNumber).value,
+    newMeter:document.getElementById("newMeter-"+rowNumber).value,
+    oldMeter:document.getElementById("oldMeter-"+rowNumber).value,
+    loadKw:document.getElementById("loadKw-"+rowNumber).value
+  };
+  google.script.run.withSuccessHandler(function(){finishRequest();loadData(currentBillingMonth);}).withFailureHandler(googleScriptFail_(function(error){finishRequest();alert("Could not save reading: "+error.message);})).saveRecord(record);
+}
+function deleteRow(rowNumber){
+  if(!lastDashboardData || !lastDashboardData.isOwner) return;
+  if(!confirm("Delete this reading? This cannot be undone.")) return;
+  if(!beginRequest()) return;
+  google.script.run.withSuccessHandler(function(){finishRequest();loadData(currentBillingMonth);}).withFailureHandler(googleScriptFail_(function(error){finishRequest();alert("Could not delete reading: "+error.message);})).deleteRecord(rowNumber);
+}
+function renderNotes(notes){
+  let html='';
+  if(!notes.length){
+    html='<div style="padding:20px;color:#6b7280;text-align:center">No operational notes yet.</div>';
+  }else{
+    notes.forEach(function(n){
+      const dt=n.timestamp ? new Date(n.timestamp).toLocaleString() : "";
+      const author=n.author ? escapeHtml(n.author) : "Unknown";
+      html+='<div class="noteItem" title="Author: '+author+'">'+
+        '<div class="noteText">'+escapeHtml(n.note)+'</div>'+
+        '<div class="noteMeta">'+escapeHtml(dt)+' · '+escapeHtml(n.type||"Operational")+'</div>'+
+        '<button class="smallButton deleteBtn noteDelete" data-action title="Remove" onclick="deleteOperationalNote('+n.rowNumber+')">🗑️</button>'+
+        '</div>';
+    });
+  }
+  const el=document.getElementById("notesContent");
+  if(el) el.innerHTML=html;
+}
+function addOperationalNote(){
+  const el=document.getElementById("new-note");
+  const text=el ? el.value.trim() : "";
+  if(!text){alert("Write a note first.");return;}
+  if(!beginRequest()) return;
+  google.script.run.withSuccessHandler(function(){
+    finishRequest();
+    if(el) el.value="";
+    loadData(currentBillingMonth);
+  }).withFailureHandler(googleScriptFail_(function(e){finishRequest();alert("Could not add note: "+e.message);})).addOperationalNote(text);
+}
+function deleteOperationalNote(rowNumber){
+  if(!confirm("Remove this operational note? This action cannot be undone.")) return;
+  if(!beginRequest()) return;
+  google.script.run.withSuccessHandler(function(){
+    finishRequest();
+    loadData(currentBillingMonth);
+  }).withFailureHandler(googleScriptFail_(function(e){finishRequest();alert("Could not remove note: "+e.message);})).deleteOperationalNote(rowNumber);
+}
+function historyTable_(title, rows){
+  let html = '<div class="historyBlock"><h4 style="margin:0 0 8px">' + escapeHtml(title) + '</h4>';
+  html += '<table class="historyTable"><thead><tr><th>Month</th><th>Status</th><th class="num">Units</th><th class="num">Bill (Rs.)</th><th class="num">Payment (Rs.)</th></tr></thead><tbody>';
+  if(!rows.length){
+    html += '<tr><td colspan="5" style="text-align:center;color:#6b7280">No history recorded yet.</td></tr>';
+  } else {
+    rows.forEach(function(r){
+      html += '<tr><td>' + escapeHtml(r.month) + '</td><td>' + escapeHtml(r.status) + '</td>' +
+        '<td class="num">' + num(r.units) + '</td><td class="num">' + money(r.bill) + '</td><td class="num">' + money(r.payment) + '</td></tr>';
+    });
+  }
+  html += '</tbody></table></div>';
+  return html;
+}
+function renderHistory(billingHistory, readingCollections){
+  const host = document.getElementById('billingHistoryContent');
+  if(host){
+    const meter1Rows = billingHistory.filter(function(r){ return r.meter === 'METER 1'; });
+    const meter2Rows = billingHistory.filter(function(r){ return r.meter === 'METER 2'; });
+    host.innerHTML = historyTable_('Meter 1', meter1Rows) + historyTable_('Meter 2', meter2Rows);
+  }
+  const auditHost = document.getElementById('readingCollectionsContent');
+  if(auditHost){
+    if(!readingCollections.length){
+      auditHost.innerHTML = '<div style="padding:20px;color:#6b7280;text-align:center">No collections logged yet.</div>';
+    } else {
+      let html = '';
+      readingCollections.forEach(function(c){
+        const actualUnits = c.rawReading - c.previousBaseline;
+        const extendedDays = Math.round(Number(c.extendedDays || 0));
+        const dailyVelocity = extendedDays > 0 ? actualUnits / extendedDays : 0;
+        // Each collection uses that billing month's real length (30 or 31, etc.)
+        const standardDays = Math.round(
+          (c.standardDays != null && c.standardDays !== '')
+            ? Number(c.standardDays)
+            : ((lastDashboardData && lastDashboardData.proRata && lastDashboardData.proRata.standardDays) || 30)
+        );
+        const billedUnits = Math.floor(dailyVelocity * standardDays);
+        const adjustedPresent = c.previousBaseline + billedUnits;
+        const carryForward = actualUnits - billedUnits;
+        const daysLabel = Number.isInteger(standardDays) ? String(standardDays) : Number(standardDays).toFixed(0);
+        html += '<div class="auditCard"><h4>' + escapeHtml(c.month) + ' — ' + escapeHtml(c.meter) + '</h4>' +
+          '<div class="auditRow"><span>Collected</span><strong>' + escapeHtml(c.date) + ' ' + escapeHtml(c.time) + '</strong></div>' +
+          '<div class="auditRow"><span>Previous baseline</span><strong>' + num(c.previousBaseline) + ' kWh</strong></div>' +
+          '<div class="auditRow"><span>Raw reading</span><strong>' + num(c.rawReading) + ' kWh</strong></div>' +
+          '<div class="auditRow"><span>Extended days</span><strong>' + extendedDays + '</strong></div>' +
+          '<div class="auditRow"><span>Total actual units</span><strong>' + num(actualUnits) + ' kWh</strong></div>' +
+          '<div class="auditRow"><span>Daily velocity</span><strong>' + num(dailyVelocity) + ' kWh/d</strong></div>' +
+          '<div class="auditRow"><span>Billed units (' + daysLabel + 'd)</span><strong>' + num(billedUnits) + ' kWh</strong></div>' +
+          '<div class="auditRow"><span>Adjusted present counter</span><strong>' + num(adjustedPresent) + ' kWh</strong></div>' +
+          '<div class="auditRow"><span>Carry-forward balance</span><strong>' + num(carryForward) + ' kWh</strong></div>' +
+          '</div>';
+      });
+      auditHost.innerHTML = html;
+    }
+  }
+}
+function submitReadingCollection(){
+  const meter = document.getElementById('col-meter').value;
+  const date = document.getElementById('col-date').value;
+  const time = document.getElementById('col-time').value;
+  const reading = document.getElementById('col-reading').value;
+  const month = document.getElementById('col-month').value.trim();
+  const baseline = document.getElementById('col-baseline').value;
+  if(!date || !time || reading === ""){
+    alert('Collection date, time and raw reading are required.');
+    return;
+  }
+  if(!beginRequest()) return;
+  google.script.run
+    .withSuccessHandler(function(result){
+      finishRequest();
+      document.getElementById('col-reading').value = '';
+      loadData(currentBillingMonth);
+    })
+    .withFailureHandler(googleScriptFail_(function(e){ finishRequest(); alert('Could not save collection: ' + e.message); }))
+    .addReadingCollection({
+      meter: meter, date: date, time: time,
+      rawReading: reading,
+      month: month,
+      previousBaseline: baseline
+    });
+}
+function renderNotify(people){
+  let html =
+    '<table><thead><tr>' +
+    '<th>Name</th><th>Email</th><th></th>' +
+    '</tr></thead><tbody>';
+  html += '<tr class="addRow">' +
+    '<td><input type="text" id="new-person-name"></td>' +
+    '<td><input type="email" id="new-person-email" placeholder="name@example.com"></td>' +
+    '<td><button class="smallButton addBtn" data-action title="Add" onclick="addPerson()">➕</button></td>' +
+    '</tr>';
+  people.forEach(function(p){
+    html += '<tr>' +
+      '<td>' + escapeHtml(p.name) + '</td>' +
+      '<td>' + escapeHtml(p.email) + '</td>' +
+      '<td><button class="smallButton deleteBtn" title="Remove" onclick="deletePerson(' +
+      p.rowNumber + ')">🗑️</button></td>' +
+      '</tr>';
+  });
+  html += '</tbody></table>';
+  if(!people.length){
+    html += '<div style="padding:20px;color:#6b7280;text-align:center">' +
+      'Nobody on the notify list yet.' +
+      '</div>';
+  }
+  document.getElementById("notifyContent").innerHTML = html;
+}
+function addPerson(){
+  if(!beginRequest()) return;
+  const person = {
+    name:document.getElementById("new-person-name").value,
+    email:document.getElementById("new-person-email").value
+  };
+  if(!person.email){
+    finishRequest();
+    alert("Email is required.");
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(function(){ finishRequest(); loadData(currentBillingMonth); })
+    .withFailureHandler(googleScriptFail_(function(error){ finishRequest(); alert("Could not add person: " + error.message); }))
+    .addNotifyPerson(person);
+}
+function deletePerson(rowNumber){
+  if(!confirm("Remove this person from the notify list?")) return;
+  if(!beginRequest()) return;
+  google.script.run
+    .withSuccessHandler(function(){ finishRequest(); loadData(currentBillingMonth); })
+    .withFailureHandler(googleScriptFail_(function(error){ finishRequest(); alert("Could not remove person: " + error.message); }))
+    .deleteNotifyPerson(rowNumber);
+}
+loadData();
+</script>
+</body>
+</html>
+`;
+}

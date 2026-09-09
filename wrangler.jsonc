@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "emonitor",
+  "compatibility_date": "2026-09-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "@tanstack/react-start/server-entry",
+  "env": {
+    "production": {
+      "routes": [
+        {
+          "pattern": "emonitor.zzatworq.dev",
+          "zone_name": "zzatworq.dev"
+        }
+      ]
+    }
+  }
+}
