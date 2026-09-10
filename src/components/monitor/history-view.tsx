@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { calculateProRata } from "@/lib/engine/bill";
@@ -46,6 +46,27 @@ function HistoryTable({ title, rows }: { title: string; rows: HistoryRow[] }) {
   );
 }
 
+function localDateTime(date: string, time: string): Date {
+  return new Date(`${date}T${time || "00:00"}:00`);
+}
+
+function calendarDaysBetween(startDate: string, endDate: string): number {
+  const start = new Date(`${startDate}T00:00:00`).getTime();
+  const end = new Date(`${endDate}T00:00:00`).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
+  return Math.max(0, Math.round((end - start) / 86400000));
+}
+
+function billingMonth(date: string): string {
+  const value = new Date(`${date}T12:00:00`);
+  return Number.isNaN(value.getTime()) ? "" : value.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+}
+
+function daysInMonth(date: string): number {
+  const value = new Date(`${date}T12:00:00`);
+  return Number.isNaN(value.getTime()) ? 0 : new Date(value.getFullYear(), value.getMonth() + 1, 0).getDate();
+}
+
 export function HistoryView() {
   const history = useMonitor((s) => s.history);
   const collections = useMonitor((s) => s.collections);
@@ -54,45 +75,50 @@ export function HistoryView() {
   const [date, setDate] = useState("2026-09-08");
   const [time, setTime] = useState("12:00");
   const [raw, setRaw] = useState("");
-  const [month, setMonth] = useState("");
-  const [baseline, setBaseline] = useState("");
-  const [extendedDays, setExtendedDays] = useState("");
-  const [standardDays, setStandardDays] = useState("");
+  const [status, setStatus] = useState("EX");
   const [bill, setBill] = useState("");
   const [payment, setPayment] = useState("");
-  const [status, setStatus] = useState("EX");
+
+  const calculated = useMemo(() => {
+    const current = localDateTime(date, time);
+    const prior = collections
+      .filter((c) => c.meter === meter && localDateTime(c.date, c.time).getTime() < current.getTime())
+      .sort((a, b) => localDateTime(b.date, b.time).getTime() - localDateTime(a.date, a.time).getTime())[0];
+    const month = billingMonth(date);
+    const standardDays = daysInMonth(date);
+    const extendedDays = prior ? calendarDaysBetween(prior.date, date) : standardDays;
+    return {
+      month,
+      baseline: prior?.rawReading ?? null,
+      extendedDays,
+      standardDays,
+      prior,
+    };
+  }, [collections, date, meter, time]);
+
+  const canSave = raw !== "" && calculated.baseline != null && calculated.extendedDays > 0 && calculated.standardDays > 0;
 
   return (
     <div className="space-y-5">
       <section className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
         <div>
-          <h2 className="font-display text-2xl font-medium">Billing history</h2>
-          <p className="mt-1 text-sm text-muted">One independent billing record per meter. Collection entries update this table automatically.</p>
+          <h2 className="font-display text-2xl font-medium">Collection audit</h2>
+          <p className="mt-1 text-sm text-muted">Enter only the official collection information. Billing month, previous baseline, day counts and billed units are calculated automatically.</p>
         </div>
-        <div className="mt-6 grid gap-8 md:grid-cols-2">
-          <HistoryTable title="Meter 1" rows={history.filter((h) => h.meter === "METER 1")} />
-          <HistoryTable title="Meter 2" rows={history.filter((h) => h.meter === "METER 2")} />
-        </div>
-      </section>
-
-      <section className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
-        <h2 className="font-display text-2xl font-medium">Collection audit</h2>
-        <p className="mt-1 text-sm text-muted">Record the official reading. Billed units are derived from the pro-rata calculation and the billing history row is generated from this entry.</p>
         <form
-          className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+          className="mt-6 space-y-5"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!date || !time || raw === "") return;
-            const inferredMonth = new Date(`${date}T12:00:00`).toLocaleDateString("en-US", { month: "short", year: "numeric" });
+            if (!canSave || !date || !time) return;
             addCollection({
               meter,
               date,
               time,
               rawReading: Number(raw),
-              previousBaseline: baseline === "" ? 0 : Number(baseline),
-              month: month || inferredMonth,
-              extendedDays: extendedDays === "" ? undefined : Number(extendedDays),
-              standardDays: standardDays === "" ? undefined : Number(standardDays),
+              previousBaseline: calculated.baseline as number,
+              month: calculated.month,
+              extendedDays: calculated.extendedDays,
+              standardDays: calculated.standardDays,
               status: status || "EX",
               bill: bill === "" ? 0 : Number(bill),
               payment: payment === "" ? 0 : Number(payment),
@@ -102,19 +128,46 @@ export function HistoryView() {
             setPayment("");
           }}
         >
-          <div><Label htmlFor="col-meter">Meter</Label><select id="col-meter" value={meter} onChange={(e) => setMeter(e.target.value as MeterId)} className="mt-1 h-11 w-full rounded-md border border-border bg-elevated px-3 text-sm"><option>METER 1</option><option>METER 2</option></select></div>
-          <div><Label htmlFor="col-date">Date</Label><Input id="col-date" type="date" className="mt-1" value={date} onChange={(e) => setDate(e.target.value)} /></div>
-          <div><Label htmlFor="col-time">Time</Label><Input id="col-time" type="time" className="mt-1" value={time} onChange={(e) => setTime(e.target.value)} /></div>
-          <div><Label htmlFor="col-raw">Raw reading</Label><Input id="col-raw" type="number" step="0.01" className="mt-1" value={raw} onChange={(e) => setRaw(e.target.value)} /></div>
-          <div><Label htmlFor="col-month">Billing month</Label><Input id="col-month" className="mt-1" placeholder="auto" value={month} onChange={(e) => setMonth(e.target.value)} /></div>
-          <div><Label htmlFor="col-base">Previous baseline</Label><Input id="col-base" type="number" step="0.01" className="mt-1" placeholder="auto" value={baseline} onChange={(e) => setBaseline(e.target.value)} /></div>
-          <div><Label htmlFor="col-ext">Extended days</Label><Input id="col-ext" type="number" step="1" className="mt-1" placeholder="30" value={extendedDays} onChange={(e) => setExtendedDays(e.target.value)} /></div>
-          <div><Label htmlFor="col-std">Standard days</Label><Input id="col-std" type="number" step="1" className="mt-1" placeholder="30" value={standardDays} onChange={(e) => setStandardDays(e.target.value)} /></div>
-          <div><Label htmlFor="col-status">Status</Label><Input id="col-status" className="mt-1" value={status} onChange={(e) => setStatus(e.target.value.toUpperCase())} /></div>
-          <div><Label htmlFor="col-bill">Official bill</Label><Input id="col-bill" type="number" step="1" className="mt-1" placeholder="optional" value={bill} onChange={(e) => setBill(e.target.value)} /></div>
-          <div><Label htmlFor="col-paid">Paid</Label><Input id="col-paid" type="number" step="1" className="mt-1" placeholder="optional" value={payment} onChange={(e) => setPayment(e.target.value)} /></div>
-          <div className="flex items-end"><Button type="submit">Save collection</Button></div>
+          <div>
+            <div className="mb-3 text-xs font-medium uppercase tracking-wider text-muted">Official inputs</div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div><Label htmlFor="col-meter">Meter</Label><select id="col-meter" value={meter} onChange={(e) => setMeter(e.target.value as MeterId)} className="mt-1 h-11 w-full rounded-md border border-border bg-elevated px-3 text-sm"><option>METER 1</option><option>METER 2</option></select></div>
+              <div><Label htmlFor="col-date">Date</Label><Input id="col-date" type="date" className="mt-1" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+              <div><Label htmlFor="col-time">Time</Label><Input id="col-time" type="time" className="mt-1" value={time} onChange={(e) => setTime(e.target.value)} /></div>
+              <div><Label htmlFor="col-raw">Raw reading</Label><Input id="col-raw" type="number" step="0.01" className="mt-1" value={raw} onChange={(e) => setRaw(e.target.value)} placeholder="Official meter reading" /></div>
+              <div><Label htmlFor="col-status">Status</Label><Input id="col-status" className="mt-1" value={status} onChange={(e) => setStatus(e.target.value.toUpperCase())} /></div>
+              <div><Label htmlFor="col-bill">Official bill</Label><Input id="col-bill" type="number" step="1" className="mt-1" placeholder="Optional" value={bill} onChange={(e) => setBill(e.target.value)} /></div>
+              <div><Label htmlFor="col-paid">Paid</Label><Input id="col-paid" type="number" step="1" className="mt-1" placeholder="Optional" value={payment} onChange={(e) => setPayment(e.target.value)} /></div>
+              <div className="flex items-end"><Button type="submit" disabled={!canSave}>Save collection</Button></div>
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-3 text-xs font-medium uppercase tracking-wider text-muted">Calculated automatically</div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-xl border border-border p-3"><div className="text-xs text-muted">Billing month</div><div className="mt-1 font-medium">{calculated.month || "—"}</div></div>
+              <div className="rounded-xl border border-border p-3"><div className="text-xs text-muted">Previous baseline</div><div className="mt-1 tabular-nums">{calculated.baseline == null ? "—" : units(calculated.baseline)}</div></div>
+              <div className="rounded-xl border border-border p-3"><div className="text-xs text-muted">Extended days</div><div className="mt-1 tabular-nums">{calculated.extendedDays || "—"}</div></div>
+              <div className="rounded-xl border border-border p-3"><div className="text-xs text-muted">Standard days</div><div className="mt-1 tabular-nums">{calculated.standardDays || "—"}</div></div>
+            </div>
+            {calculated.prior ? (
+              <p className="mt-2 text-xs text-muted">Baseline comes from the previous official {meter} collection ({calculated.prior.month}, {calculated.prior.rawReading}). Extended days are the calendar-day interval between the two official collection dates.</p>
+            ) : (
+              <p className="mt-2 text-xs text-muted">No earlier collection exists for this meter, so a baseline cannot be calculated yet. Record the first baseline separately rather than silently using zero.</p>
+            )}
+          </div>
         </form>
+      </section>
+
+      <section className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
+        <div>
+          <h2 className="font-display text-2xl font-medium">Billing history</h2>
+          <p className="mt-1 text-sm text-muted">One independent billing record per meter. Collection entries update this table automatically.</p>
+        </div>
+        <div className="mt-6 grid gap-8 md:grid-cols-2">
+          <HistoryTable title="Meter 1" rows={history.filter((h) => h.meter === "METER 1")} />
+          <HistoryTable title="Meter 2" rows={history.filter((h) => h.meter === "METER 2")} />
+        </div>
       </section>
 
       <section className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
