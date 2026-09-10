@@ -7,7 +7,7 @@ import { loadMonitorData, saveMonitorData, type MonitorData } from "@/lib/monito
 import { useDashboard, useMonitor } from "@/store/monitor";
 
 const PAGES = [
-  { to: "/summary", label: "Summary" },
+  { to: "/", label: "Summary" },
   { to: "/bill", label: "Bill" },
   { to: "/history", label: "History" },
   { to: "/notes", label: "Notes" },
@@ -66,7 +66,7 @@ export function AppShell() {
       {error ? <div className="sticky top-0 z-50 bg-red-600 px-4 py-2 text-center text-sm text-white">{error}</div> : null}
       <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
-          <Link to="/summary" className="flex min-w-0 items-center gap-3">
+          <Link to="/" className="flex min-w-0 items-center gap-3">
             <div className="flex size-10 items-center justify-center rounded-lg bg-foreground text-background"><Zap className="size-4" strokeWidth={1.75} /></div>
             <div className="min-w-0"><h1 className="truncate font-display text-lg font-medium tracking-tight">Electricity Monitor</h1><p className="truncate text-xs text-muted">{months.length ? `Latest ${months[0]?.label}` : "No readings yet"}</p></div>
           </Link>
