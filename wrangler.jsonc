@@ -1,9 +1,23 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "emonitor",
-  "compatibility_date": "2026-09-07",
+  "compatibility_date": "2026-09-10",
   "compatibility_flags": ["nodejs_compat"],
-  "main": "@tanstack/react-start/server-entry",
+  "main": "src/server.ts",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MONITOR_STATE",
+        "class_name": "MonitorState"
+      }
+    ]
+  },
+  "exports": {
+    "MonitorState": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
   "env": {
     "production": {
       "routes": [
