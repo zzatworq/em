@@ -38,6 +38,10 @@ export type GeneralSettings = {
   solarStartMinute: number;
   solarEndHour: number;
   solarEndMinute: number;
+  theme: "light" | "dark" | "system";
+  meter1Color: string;
+  meter2Color: string;
+  v1Url: string;
 };
 
 export type ReadingInput = {
