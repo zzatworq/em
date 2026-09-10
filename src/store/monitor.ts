@@ -5,7 +5,6 @@ import type { MonitorData } from "@/lib/monitor-data";
 import type {
   Collection,
   GeneralSettings,
-  HistoryRow,
   HourlyPoint,
   Note,
   ReadingInput,
