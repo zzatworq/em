@@ -56,8 +56,12 @@ function themeColor(name: string, fallback: string) {
 }
 
 function formatBarTotal(value: number) {
-  const fixed = value.toFixed(2);
-  return fixed.replace(/^(-?)0\./, "$1.");
+  // Daily labels: one decimal for values >= 1, two decimals below 1,
+  // and remove the leading zero for fractional values.
+  if (value < 1) {
+    return value.toFixed(2).replace(/^0\./, ".");
+  }
+  return value.toFixed(1);
 }
 
 function BarValue({
@@ -78,7 +82,7 @@ function BarValue({
       y={Math.max(y - 6, 14)}
       textAnchor="middle"
       fill="var(--color-foreground)"
-      fontSize={11}
+      fontSize={9}
       fontWeight={600}
     >
       {formatBarTotal(value)}
