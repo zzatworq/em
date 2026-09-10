@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Zap } from "lucide-react";
+import { ExternalLink, Zap } from "lucide-react";
 import { BillView } from "@/components/monitor/bill-view";
 import { HistoryView } from "@/components/monitor/history-view";
 import { NotesView } from "@/components/monitor/notes-view";
@@ -36,10 +36,20 @@ function dataFromStore(): MonitorData {
 function ShellBody() {
   const tab = useMonitor((s) => s.tab);
   const setTab = useMonitor((s) => s.setTab);
+  const general = useMonitor((s) => s.general);
   const selectedMonth = useMonitor((s) => s.selectedMonth);
   const setMonth = useMonitor((s) => s.setMonth);
   const { dashboard, months } = useDashboard();
   const latest = dashboard.empty ? "No readings yet" : `Latest ${dashboard.latestDate}`;
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = general.theme;
+    document.documentElement.style.setProperty("--color-meter1", general.meter1Color);
+    document.documentElement.style.setProperty("--color-meter2", general.meter2Color);
+    return () => {
+      delete document.documentElement.dataset.theme;
+    };
+  }, [general.theme, general.meter1Color, general.meter2Color]);
 
   return (
     <div className="min-h-dvh bg-background text-foreground">
@@ -54,6 +64,14 @@ function ShellBody() {
               <p className="truncate text-xs text-muted">{latest}</p>
             </div>
           </div>
+          {general.v1Url.trim() ? (
+            <Button asChild variant="outline" size="sm" className="shrink-0 gap-1.5" title="Open V1 app">
+              <a href={general.v1Url.trim()} target="_blank" rel="noreferrer">
+                <ExternalLink className="size-3.5" />
+                <span className="hidden sm:inline">V1</span>
+              </a>
+            </Button>
+          ) : null}
         </div>
       </header>
 
@@ -65,10 +83,7 @@ function ShellBody() {
                 key={t.id}
                 variant="ghost"
                 size="sm"
-                className={cn(
-                  "h-10 shrink-0 rounded-lg px-3",
-                  tab === t.id && "bg-foreground text-background hover:bg-foreground",
-                )}
+                className={cn("h-10 shrink-0 rounded-lg px-3", tab === t.id && "bg-foreground text-background hover:bg-foreground")}
                 onClick={() => setTab(t.id)}
               >
                 {t.label}
@@ -78,14 +93,8 @@ function ShellBody() {
           {months.length ? (
             <label className="flex h-12 items-center gap-2 rounded-xl bg-elevated px-3 shadow-border">
               <span className="text-xs font-medium uppercase tracking-wider text-muted">Month</span>
-              <select
-                className="bg-transparent text-sm font-medium outline-none"
-                value={selectedMonth ?? months[0]?.value}
-                onChange={(e) => setMonth(e.target.value)}
-              >
-                {months.map((m) => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
-                ))}
+              <select className="bg-transparent text-sm font-medium outline-none" value={selectedMonth ?? months[0]?.value} onChange={(e) => setMonth(e.target.value)}>
+                {months.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
               </select>
             </label>
           ) : null}
@@ -114,12 +123,8 @@ export function AppShell() {
   useEffect(() => {
     let cancelled = false;
     loadMonitorData()
-      .then((data) => {
-        if (!cancelled) replaceData(data);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Could not load shared meter data.");
-      });
+      .then((data) => { if (!cancelled) replaceData(data); })
+      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Could not load shared meter data."); });
     return () => { cancelled = true; };
   }, [replaceData]);
 
@@ -139,26 +144,16 @@ export function AppShell() {
         saving.current = false;
       }
     }, 400);
-    return () => {
-      if (saveTimer.current) window.clearTimeout(saveTimer.current);
-    };
+    return () => { if (saveTimer.current) window.clearTimeout(saveTimer.current); };
   }, [dirty, hydrated, markSaved]);
 
   if (!hydrated) {
-    return (
-      <div className="flex min-h-dvh items-center justify-center bg-background text-muted">
-        <p className="text-sm">{error ? `Loading failed: ${error}` : "Loading shared meter data…"}</p>
-      </div>
-    );
+    return <div className="flex min-h-dvh items-center justify-center bg-background text-muted"><p className="text-sm">{error ? `Loading failed: ${error}` : "Loading shared meter data…"}</p></div>;
   }
 
   return (
     <>
-      {error ? (
-        <div className="sticky top-0 z-50 bg-red-600 px-4 py-2 text-center text-sm text-white">
-          {error}
-        </div>
-      ) : null}
+      {error ? <div className="sticky top-0 z-50 bg-red-600 px-4 py-2 text-center text-sm text-white">{error}</div> : null}
       <ShellBody />
     </>
   );
