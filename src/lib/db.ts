@@ -1,4 +1,4 @@
-import { pendingMigrations } from "../../scripts/migration-plan-plan.mjs";
+import { pendingMigrations } from "../../scripts/migration-plan.mjs";
 
 /** Which database backend is active for a request. */
 export type DbSource = "neon" | "pglite";
