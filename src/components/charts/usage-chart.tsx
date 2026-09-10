@@ -55,6 +55,11 @@ function themeColor(name: string, fallback: string) {
   return v || fallback;
 }
 
+function formatBarTotal(value: number) {
+  const fixed = value.toFixed(2);
+  return fixed.replace(/^(-?)0\./, "$1.");
+}
+
 function BarValue({
   x,
   y,
@@ -66,7 +71,7 @@ function BarValue({
   width?: number;
   value?: number;
 }) {
-  if (!value || value <= 0 || x == null || y == null || width == null) return null;
+  if (value == null || value <= 0 || x == null || y == null || width == null) return null;
   return (
     <text
       x={x + width / 2}
@@ -76,7 +81,7 @@ function BarValue({
       fontSize={11}
       fontWeight={600}
     >
-      {units(value)}
+      {formatBarTotal(value)}
     </text>
   );
 }
@@ -133,10 +138,10 @@ export function UsageChart({
             content={<ChartTooltip />}
             cursor={{ fill: "rgba(236,235,228,0.06)" }}
           />
-          <Bar dataKey="meter1" stackId="s" fill={fills.m1} maxBarSize={22}>
+          <Bar dataKey="meter1" stackId="s" fill={fills.m1} maxBarSize={22} />
+          <Bar dataKey="meter2" stackId="s" fill={fills.m2} radius={[3, 3, 0, 0]} maxBarSize={22}>
             <LabelList dataKey="total" content={<BarValue />} />
           </Bar>
-          <Bar dataKey="meter2" stackId="s" fill={fills.m2} radius={[3, 3, 0, 0]} maxBarSize={22} />
         </BarChart>
       </ResponsiveContainer>
     </div>
