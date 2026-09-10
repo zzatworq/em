@@ -245,6 +245,7 @@ export function ReadingsView() {
   const readings = useMonitor((s) => s.readings);
   const deleteReading = useMonitor((s) => s.deleteReading);
   const clearAllReadings = useMonitor((s) => s.clearAllReadings);
+  const markDirty = useMonitor((s) => s.markDirty);
   const fileRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<string>("");
   const [modalOpen, setModalOpen] = useState(false);
@@ -305,6 +306,7 @@ export function ReadingsView() {
             (a, b) => a.datetime - b.datetime,
           ),
         });
+        markDirty();
         setStatus(`Imported ${result.readings.length} readings; skipped ${result.duplicates} duplicates.`);
         return;
       }
@@ -338,6 +340,7 @@ export function ReadingsView() {
         selectedMonth: null,
         hourlyOverride: null,
       });
+      markDirty();
       setStatus("Full application backup restored successfully.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Import failed.");

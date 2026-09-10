@@ -3,6 +3,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  LabelList,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -11,14 +12,19 @@ import {
 import type { DailyPoint, HourlyPoint } from "@/lib/engine/types";
 import { units } from "@/lib/engine/time";
 
-type Row = { label: string; meter1: number; meter2: number };
+type Row = {
+  label: string;
+  meter1: number;
+  meter2: number;
+  total: number;
+};
 
 function toRows(points: Array<DailyPoint | HourlyPoint>): Row[] {
-  return points.map((p) => ({
-    label: p.label,
-    meter1: p.newMeter === "" ? 0 : Number(p.newMeter),
-    meter2: p.oldMeter === "" ? 0 : Number(p.oldMeter),
-  }));
+  return points.map((p) => {
+    const meter1 = p.newMeter === "" ? 0 : Number(p.newMeter);
+    const meter2 = p.oldMeter === "" ? 0 : Number(p.oldMeter);
+    return { label: p.label, meter1, meter2, total: meter1 + meter2 };
+  });
 }
 
 function ChartTooltip({
@@ -49,6 +55,32 @@ function themeColor(name: string, fallback: string) {
   return v || fallback;
 }
 
+function BarValue({
+  x,
+  y,
+  width,
+  value,
+}: {
+  x?: number;
+  y?: number;
+  width?: number;
+  value?: number;
+}) {
+  if (!value || value <= 0 || x == null || y == null || width == null) return null;
+  return (
+    <text
+      x={x + width / 2}
+      y={Math.max(y - 6, 14)}
+      textAnchor="middle"
+      fill="var(--color-foreground)"
+      fontSize={11}
+      fontWeight={600}
+    >
+      {units(value)}
+    </text>
+  );
+}
+
 export function UsageChart({
   points,
   onBarClick,
@@ -58,6 +90,7 @@ export function UsageChart({
 }) {
   const [ready, setReady] = useState(false);
   const [fills, setFills] = useState({ m1: "#e7e4d8", m2: "#7d9e94", grid: "#3a3c36" });
+
   useEffect(() => {
     setFills({
       m1: themeColor("--color-meter1", "#e7e4d8"),
@@ -66,6 +99,7 @@ export function UsageChart({
     });
     setReady(true);
   }, []);
+
   const data = toRows(points);
   if (!ready) return <div className="h-80 w-full rounded-lg bg-muted/40" />;
 
@@ -74,7 +108,7 @@ export function UsageChart({
       <ResponsiveContainer width="100%" height="100%">
         <BarChart
           data={data}
-          margin={{ top: 8, right: 4, left: -18, bottom: 0 }}
+          margin={{ top: 28, right: 4, left: -18, bottom: 0 }}
           onClick={(state) => {
             if (onBarClick && state?.activeTooltipIndex != null) {
               onBarClick(Number(state.activeTooltipIndex));
@@ -99,7 +133,9 @@ export function UsageChart({
             content={<ChartTooltip />}
             cursor={{ fill: "rgba(236,235,228,0.06)" }}
           />
-          <Bar dataKey="meter1" stackId="s" fill={fills.m1} maxBarSize={22} />
+          <Bar dataKey="meter1" stackId="s" fill={fills.m1} maxBarSize={22}>
+            <LabelList dataKey="total" content={<BarValue />} />
+          </Bar>
           <Bar dataKey="meter2" stackId="s" fill={fills.m2} radius={[3, 3, 0, 0]} maxBarSize={22} />
         </BarChart>
       </ResponsiveContainer>
