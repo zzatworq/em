@@ -70,6 +70,51 @@ export function SettingsView() {
   return (
     <div className="space-y-5">
       <section className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
+        <h2 className="font-display text-2xl font-medium">Appearance & links</h2>
+        <p className="mt-1 text-sm text-muted">Customize the interface and the shortcut to the V1 app.</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div>
+            <Label>Theme</Label>
+            <select
+              className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+              value={g.theme}
+              onChange={(e) => setG({ ...g, theme: e.target.value as GeneralSettings["theme"] })}
+            >
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </div>
+          <div>
+            <Label>Meter 1 colour</Label>
+            <div className="mt-1 flex gap-2">
+              <input className="h-10 w-12 cursor-pointer rounded-md border border-border bg-background p-1" type="color" value={g.meter1Color} onChange={(e) => setG({ ...g, meter1Color: e.target.value })} aria-label="Meter 1 colour" />
+              <Input value={g.meter1Color} onChange={(e) => setG({ ...g, meter1Color: e.target.value })} />
+            </div>
+          </div>
+          <div>
+            <Label>Meter 2 colour</Label>
+            <div className="mt-1 flex gap-2">
+              <input className="h-10 w-12 cursor-pointer rounded-md border border-border bg-background p-1" type="color" value={g.meter2Color} onChange={(e) => setG({ ...g, meter2Color: e.target.value })} aria-label="Meter 2 colour" />
+              <Input value={g.meter2Color} onChange={(e) => setG({ ...g, meter2Color: e.target.value })} />
+            </div>
+          </div>
+          <div className="sm:col-span-2 lg:col-span-3">
+            <Field label="V1 app URL" value={g.v1Url} placeholder="https://…" onChange={(v) => setG({ ...g, v1Url: v })} />
+          </div>
+        </div>
+        <Button
+          className="mt-5"
+          onClick={() => {
+            saveGeneral(g);
+            setSaved("Appearance and V1 link saved.");
+          }}
+        >
+          Save appearance
+        </Button>
+      </section>
+
+      <section className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
         <h2 className="font-display text-2xl font-medium">General</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Field label="Goal combined units" type="number" value={g.goalCombinedUnits} onChange={(v) => setG({ ...g, goalCombinedUnits: Number(v) })} />
@@ -77,7 +122,7 @@ export function SettingsView() {
           <Field label="Billing hour" type="number" value={g.billingHour} onChange={(v) => setG({ ...g, billingHour: Number(v) })} />
           <Field label="Billing minute" type="number" value={g.billingMinute} onChange={(v) => setG({ ...g, billingMinute: Number(v) })} />
           <Field label="Solar start hour" type="number" value={g.solarStartHour} onChange={(v) => setG({ ...g, solarStartHour: Number(v) })} />
-          <Field label="Solar end hour" type="number" value={g.solarEndHour} onChange={(v) => setG({ ...g, solarEndHour: Number(v) })} />
+          <Field label="Solar end hour" type="number" value={g.solarEndHour} type="number" onChange={(v) => setG({ ...g, solarEndHour: Number(v) })} />
         </div>
         <Button
           className="mt-5"
