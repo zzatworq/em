@@ -127,14 +127,18 @@ export function HistoryView() {
                   <div><h3 className="font-medium">{c.month} — {c.meter}</h3><p className="text-xs text-muted">Collected {c.date} at {c.time}</p></div>
                   <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted">{c.status || "EX"}</span>
                 </div>
-                <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3 lg:grid-cols-6">
-                  <div><dt className="text-xs text-muted">Baseline</dt><dd className="tabular-nums">{units(c.previousBaseline)}</dd></div>
-                  <div><dt className="text-xs text-muted">Raw</dt><dd className="tabular-nums">{units(c.rawReading)}</dd></div>
-                  <div><dt className="text-xs text-muted">Actual units</dt><dd className="tabular-nums">{units(audit.actualUnits)}</dd></div>
-                  <div><dt className="text-xs text-muted">Billed ({audit.standardDays}d)</dt><dd className="font-medium tabular-nums">{units(audit.billedUnits)}</dd></div>
-                  <div><dt className="text-xs text-muted">Carry-forward</dt><dd className="tabular-nums">{units(audit.carryForward)}</dd></div>
-                  <div><dt className="text-xs text-muted">Official bill</dt><dd className="tabular-nums">{money(c.bill || 0)}</dd></div>
-                </dl>
+                {audit ? (
+                  <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3 lg:grid-cols-6">
+                    <div><dt className="text-xs text-muted">Baseline</dt><dd className="tabular-nums">{units(c.previousBaseline)}</dd></div>
+                    <div><dt className="text-xs text-muted">Raw</dt><dd className="tabular-nums">{units(c.rawReading)}</dd></div>
+                    <div><dt className="text-xs text-muted">Actual units</dt><dd className="tabular-nums">{units(audit.actualUnits)}</dd></div>
+                    <div><dt className="text-xs text-muted">Billed ({audit.standardDays}d)</dt><dd className="font-medium tabular-nums">{units(audit.billedUnits)}</dd></div>
+                    <div><dt className="text-xs text-muted">Carry-forward</dt><dd className="tabular-nums">{units(audit.carryForward)}</dd></div>
+                    <div><dt className="text-xs text-muted">Official bill</dt><dd className="tabular-nums">{money(c.bill || 0)}</dd></div>
+                  </dl>
+                ) : (
+                  <p className="mt-3 text-sm text-muted">Unable to calculate pro-rata audit for this collection. Check the baseline, raw reading, and day counts.</p>
+                )}
               </article>
             );
           })}
