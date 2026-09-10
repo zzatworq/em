@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { getSql } from "@/lib/db";
+import { env } from "cloudflare:workers";
 import { defaultTariff, DEFAULT_GENERAL } from "@/lib/engine/defaults";
 import { seedCollections, seedHistory, seedNotes, seedReadings } from "@/lib/engine/seed";
 import type {
@@ -48,31 +48,60 @@ function normalize(value: unknown): MonitorData {
   };
 }
 
+type DurableObjectId = {
+  readonly name?: string;
+};
+
+type DurableObjectStub = {
+  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+};
+
+type MonitorBinding = {
+  idFromName(name: string): DurableObjectId;
+  get(id: DurableObjectId): DurableObjectStub;
+};
+
+function monitorStore(): DurableObjectStub {
+  const binding = (env as unknown as { MONITOR_STATE?: MonitorBinding }).MONITOR_STATE;
+  if (!binding) {
+    throw new Error(
+      "Cloudflare MONITOR_STATE binding is missing. Deploy the Worker with the current wrangler.jsonc configuration.",
+    );
+  }
+  return binding.get(binding.idFromName("default"));
+}
+
+async function readStoredData(): Promise<unknown> {
+  const response = await monitorStore().fetch("https://monitor-state/data");
+  if (!response.ok) throw new Error(`Monitor storage read failed (${response.status})`);
+  const body = (await response.json()) as { payload?: unknown };
+  return body.payload ?? null;
+}
+
+async function writeStoredData(data: MonitorData): Promise<void> {
+  const response = await monitorStore().fetch("https://monitor-state/data", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) throw new Error(`Monitor storage write failed (${response.status})`);
+}
+
 export const loadMonitorData = createServerFn({ method: "GET" })
   .handler(async (): Promise<MonitorData> => {
-    const sql = await getSql();
-    const rows = await sql<{ payload: MonitorData }>`
-      SELECT payload FROM monitor_state WHERE id = ${"default"} LIMIT 1
-    `;
-    if (!rows[0]?.payload || Object.keys(rows[0].payload).length === 0) {
+    const stored = await readStoredData();
+    if (!stored || (typeof stored === "object" && Object.keys(stored).length === 0)) {
       const initial = demo();
-      await sql.query(
-        "UPDATE monitor_state SET payload = $1::jsonb, updated_at = now() WHERE id = $2",
-        [JSON.stringify(initial), "default"],
-      );
+      await writeStoredData(initial);
       return initial;
     }
-    return normalize(rows[0].payload);
+    return normalize(stored);
   });
 
 export const saveMonitorData = createServerFn({ method: "POST" })
   .validator((data: MonitorData) => data)
   .handler(async ({ data }): Promise<MonitorData> => {
     const normalized = normalize(data);
-    const sql = await getSql();
-    await sql.query(
-      "INSERT INTO monitor_state (id, payload, updated_at) VALUES ($1, $2::jsonb, now()) ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()",
-      ["default", JSON.stringify(normalized)],
-    );
+    await writeStoredData(normalized);
     return normalized;
   });
