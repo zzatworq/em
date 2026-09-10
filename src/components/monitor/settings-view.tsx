@@ -4,17 +4,7 @@ import { Input, Label } from "@/components/ui/input";
 import type { GeneralSettings, Tariff } from "@/lib/engine/types";
 import { useMonitor } from "@/store/monitor";
 
-function Field({
-  label,
-  value,
-  onChange,
-  type = "text",
-}: {
-  label: string;
-  value: string | number;
-  onChange: (v: string) => void;
-  type?: string;
-}) {
+function Field({ label, value, onChange, type = "text" }: { label: string; value: string | number; onChange: (v: string) => void; type?: string }) {
   return (
     <div>
       <Label>{label}</Label>
@@ -24,12 +14,8 @@ function Field({
 }
 
 function TariffEditor({ title, value, onChange }: { title: string; value: Tariff; onChange: (t: Tariff) => void }) {
-  const setAdj = (key: keyof Tariff["adjustments"], v: string) =>
-    onChange({ ...value, adjustments: { ...value.adjustments, [key]: Number(v) } });
-  const setSlab = (i: number, field: "rate" | "fixed", v: string) => {
-    const slabs = value.slabs.map((s, idx) => (idx === i ? { ...s, [field]: Number(v) } : s));
-    onChange({ ...value, slabs });
-  };
+  const setAdj = (key: keyof Tariff["adjustments"], v: string) => onChange({ ...value, adjustments: { ...value.adjustments, [key]: Number(v) } });
+  const setSlab = (i: number, field: "rate" | "fixed", v: string) => onChange({ ...value, slabs: value.slabs.map((s, idx) => (idx === i ? { ...s, [field]: Number(v) } : s)) });
   return (
     <details className="rounded-xl border border-border p-4" open={title.includes("1")}>
       <summary className="cursor-pointer font-medium">{title}</summary>
@@ -75,14 +61,8 @@ export function SettingsView() {
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div>
             <Label>Theme</Label>
-            <select
-              className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-              value={g.theme}
-              onChange={(e) => setG({ ...g, theme: e.target.value as GeneralSettings["theme"] })}
-            >
-              <option value="system">System</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
+            <select className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring" value={g.theme} onChange={(e) => setG({ ...g, theme: e.target.value as GeneralSettings["theme"] })}>
+              <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
             </select>
           </div>
           <div>
@@ -100,18 +80,10 @@ export function SettingsView() {
             </div>
           </div>
           <div className="sm:col-span-2 lg:col-span-3">
-            <Field label="V1 app URL" value={g.v1Url} placeholder="https://…" onChange={(v) => setG({ ...g, v1Url: v })} />
+            <Field label="V1 app URL" value={g.v1Url} onChange={(v) => setG({ ...g, v1Url: v })} />
           </div>
         </div>
-        <Button
-          className="mt-5"
-          onClick={() => {
-            saveGeneral(g);
-            setSaved("Appearance and V1 link saved.");
-          }}
-        >
-          Save appearance
-        </Button>
+        <Button className="mt-5" onClick={() => { saveGeneral(g); setSaved("Appearance and V1 link saved."); }}>Save appearance</Button>
       </section>
 
       <section className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
@@ -122,44 +94,18 @@ export function SettingsView() {
           <Field label="Billing hour" type="number" value={g.billingHour} onChange={(v) => setG({ ...g, billingHour: Number(v) })} />
           <Field label="Billing minute" type="number" value={g.billingMinute} onChange={(v) => setG({ ...g, billingMinute: Number(v) })} />
           <Field label="Solar start hour" type="number" value={g.solarStartHour} onChange={(v) => setG({ ...g, solarStartHour: Number(v) })} />
-          <Field label="Solar end hour" type="number" value={g.solarEndHour} type="number" onChange={(v) => setG({ ...g, solarEndHour: Number(v) })} />
+          <Field label="Solar end hour" type="number" value={g.solarEndHour} onChange={(v) => setG({ ...g, solarEndHour: Number(v) })} />
         </div>
-        <Button
-          className="mt-5"
-          onClick={() => {
-            saveGeneral(g);
-            setSaved("General settings saved.");
-          }}
-        >
-          Save general
-        </Button>
+        <Button className="mt-5" onClick={() => { saveGeneral(g); setSaved("General settings saved."); }}>Save general</Button>
       </section>
 
       <section className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
         <h2 className="font-display text-2xl font-medium">Meter tariffs</h2>
         <p className="mt-1 text-sm text-muted">MEPCO A-1 residential slabs. Each meter can differ.</p>
-        <div className="mt-4 space-y-3">
-          <TariffEditor title="Meter 1" value={a} onChange={setA} />
-          <TariffEditor title="Meter 2" value={b} onChange={setB} />
-        </div>
+        <div className="mt-4 space-y-3"><TariffEditor title="Meter 1" value={a} onChange={setA} /><TariffEditor title="Meter 2" value={b} onChange={setB} /></div>
         <div className="mt-5 flex flex-wrap gap-3">
-          <Button
-            onClick={() => {
-              saveTariffs(a, b);
-              setSaved("Tariffs saved.");
-            }}
-          >
-            Save tariffs
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => {
-              resetDemo();
-              setSaved("Demo data restored.");
-            }}
-          >
-            Restore demo data
-          </Button>
+          <Button onClick={() => { saveTariffs(a, b); setSaved("Tariffs saved."); }}>Save tariffs</Button>
+          <Button variant="outline" onClick={() => { resetDemo(); setSaved("Demo data restored."); }}>Restore demo data</Button>
         </div>
         {saved ? <p className="mt-3 text-sm text-muted">{saved}</p> : null}
       </section>
