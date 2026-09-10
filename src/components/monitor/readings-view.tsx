@@ -52,46 +52,202 @@ function nowParts() {
   };
 }
 
-export function ReadingsView() {
-  const readings = useMonitor((s) => s.readings);
-  const addReading = useMonitor((s) => s.addReading);
-  const deleteReading = useMonitor((s) => s.deleteReading);
+type MeterKey = "m1" | "m2";
+
+type MeterSlotState = {
+  value: string;
+  thumb: string | null;
+  status: "idle" | "scanning" | "done" | "error";
+  result: MeterReadingResult | null;
+  error: string;
+};
+
+function emptySlot(value: string): MeterSlotState {
+  return { value, thumb: null, status: "idle", result: null, error: "" };
+}
+
+function MeterSlot({
+  label,
+  slot,
+  onPhoto,
+  onValueChange,
+}: {
+  label: string;
+  slot: MeterSlotState;
+  onPhoto: (file: File) => void;
+  onValueChange: (value: string) => void;
+}) {
   const fileRef = useRef<HTMLInputElement>(null);
-  const [status, setStatus] = useState<string>("");
+  return (
+    <div className="rounded-xl border border-border p-3">
+      <div className="flex items-center justify-between">
+        <p className="font-medium">{label}</p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={slot.status === "scanning"}
+          onClick={() => fileRef.current?.click()}
+        >
+          {slot.status === "scanning" ? "Reading…" : slot.thumb ? "Retake photo" : "Photograph"}
+        </Button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) onPhoto(file);
+            e.target.value = "";
+          }}
+        />
+      </div>
+
+      {slot.thumb && (
+        <img
+          src={`data:image/jpeg;base64,${slot.thumb}`}
+          alt=""
+          className="mt-3 h-32 w-full rounded-lg object-cover"
+        />
+      )}
+
+      {slot.status === "done" && slot.result && (
+        <p className="mt-2 text-sm text-muted">
+          Detected {slot.result.digits ?? "—"} → <strong>{slot.result.value ?? "unreadable"}</strong>{" "}
+          ({slot.result.confidence} confidence{slot.result.label ? `, ${slot.result.label}` : ""}).
+          Check it below before saving.
+        </p>
+      )}
+      {slot.status === "error" && <p className="mt-2 text-sm text-danger">{slot.error}</p>}
+
+      <Input
+        className="mt-3"
+        type="number"
+        step="0.01"
+        placeholder={label}
+        value={slot.value}
+        onChange={(e) => onValueChange(e.target.value)}
+      />
+    </div>
+  );
+}
+
+function AddReadingModal({ onClose }: { onClose: () => void }) {
+  const addReading = useMonitor((s) => s.addReading);
+  const readings = useMonitor((s) => s.readings);
   const latest = useMemo(
     () => [...readings].sort((a, b) => b.datetime - a.datetime)[0],
     [readings],
   );
+
   const [date, setDate] = useState(nowParts().date);
   const [time, setTime] = useState(nowParts().time);
-  const [m1, setM1] = useState(latest?.newInput != null ? String(latest.newInput) : "");
-  const [m2, setM2] = useState(latest?.oldInput != null ? String(latest.oldInput) : "");
   const [load, setLoad] = useState("");
+  const [m1, setM1] = useState<MeterSlotState>(
+    emptySlot(latest?.newInput != null ? String(latest.newInput) : ""),
+  );
+  const [m2, setM2] = useState<MeterSlotState>(
+    emptySlot(latest?.oldInput != null ? String(latest.oldInput) : ""),
+  );
 
-  const [scanTarget, setScanTarget] = useState<"m1" | "m2">("m1");
-  const [scanning, setScanning] = useState(false);
-  const [scanResult, setScanResult] = useState<MeterReadingResult | null>(null);
-  const [scanError, setScanError] = useState("");
-  const photoRef = useRef<HTMLInputElement>(null);
-
-  async function handleScan(file: File) {
-    setScanning(true);
-    setScanError("");
-    setScanResult(null);
+  async function handlePhoto(which: MeterKey, file: File) {
+    const set = which === "m1" ? setM1 : setM2;
+    set((prev) => ({ ...prev, status: "scanning", error: "" }));
     try {
       const base64 = await resizeToBase64(file);
       const result = await extractMeterReading({ data: { imageBase64: base64 } });
-      setScanResult(result);
-      if (result.value != null) {
-        if (scanTarget === "m1") setM1(String(result.value));
-        else setM2(String(result.value));
-      }
+      set((prev) => ({
+        ...prev,
+        thumb: base64,
+        status: "done",
+        result,
+        value: result.value != null ? String(result.value) : prev.value,
+      }));
     } catch (err) {
-      setScanError(err instanceof Error ? err.message : "Could not read the meter photo.");
-    } finally {
-      setScanning(false);
+      set((prev) => ({
+        ...prev,
+        status: "error",
+        error: err instanceof Error ? err.message : "Could not read the meter photo.",
+      }));
     }
   }
+
+  const scanning = m1.status === "scanning" || m2.status === "scanning";
+
+  function handleSave() {
+    if (!date || !time) return;
+    const [y, mo, d] = date.split("-").map(Number);
+    const [h, mi] = time.split(":").map(Number);
+    const dt = new Date(y, mo - 1, d, h, mi, 0, 0);
+    addReading({
+      datetime: dt.getTime(),
+      newInput: m1.value === "" ? null : Number(m1.value),
+      oldInput: m2.value === "" ? null : Number(m2.value),
+      loadKw: load === "" ? null : Number(load),
+      notes: "",
+    });
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
+        <div className="flex items-center justify-between">
+          <h2 className="font-display text-2xl font-medium">Add reading</h2>
+          <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
+        </div>
+        <p className="mt-1 text-sm text-muted">
+          Photograph each meter, confirm the reading, then save. Blank fields keep the previous
+          carry-forward.
+        </p>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <MeterSlot
+            label="Meter 1"
+            slot={m1}
+            onPhoto={(f) => handlePhoto("m1", f)}
+            onValueChange={(v) => setM1((prev) => ({ ...prev, value: v }))}
+          />
+          <MeterSlot
+            label="Meter 2"
+            slot={m2}
+            onPhoto={(f) => handlePhoto("m2", f)}
+            onValueChange={(v) => setM2((prev) => ({ ...prev, value: v }))}
+          />
+        </div>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Date" />
+          <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} aria-label="Time" />
+          <Input
+            type="number"
+            step="0.01"
+            placeholder="Inverter kW"
+            value={load}
+            onChange={(e) => setLoad(e.target.value)}
+          />
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleSave} disabled={scanning}>
+            {scanning ? "Waiting for photo…" : "Save reading"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function ReadingsView() {
+  const readings = useMonitor((s) => s.readings);
+  const deleteReading = useMonitor((s) => s.deleteReading);
+  const clearAllReadings = useMonitor((s) => s.clearAllReadings);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [status, setStatus] = useState<string>("");
+  const [modalOpen, setModalOpen] = useState(false);
 
   const sorted = useMemo(
     () => [...readings].sort((a, b) => b.datetime - a.datetime),
@@ -119,6 +275,16 @@ export function ReadingsView() {
   function exportCsv() {
     downloadReadingsCsv(readings);
     setStatus("Readings CSV exported.");
+  }
+
+  function handleClearAll() {
+    if (readings.length === 0) return;
+    const confirmed = window.confirm(
+      `Delete all ${readings.length} readings? Export a backup first if you're not sure — this can't be undone.`,
+    );
+    if (!confirmed) return;
+    clearAllReadings();
+    setStatus("All readings cleared.");
   }
 
   async function handleImport(file: File) {
@@ -181,84 +347,18 @@ export function ReadingsView() {
   return (
     <section className="space-y-5">
       <div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
-        <h2 className="font-display text-2xl font-medium">Readings</h2>
-        <p className="mt-1 text-sm text-muted">
-          Add a snapshot. Blank meter fields keep the previous carry-forward.
-        </p>
-
-        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-dashed border-line p-3">
-          <span className="text-sm text-muted">Scan a meter photo into</span>
-          <div className="flex overflow-hidden rounded-lg border border-line">
-            <button
-              type="button"
-              className={`px-3 py-1.5 text-sm ${scanTarget === "m1" ? "bg-primary text-primary-foreground" : "text-muted"}`}
-              onClick={() => setScanTarget("m1")}
-            >
-              Meter 1
-            </button>
-            <button
-              type="button"
-              className={`px-3 py-1.5 text-sm ${scanTarget === "m2" ? "bg-primary text-primary-foreground" : "text-muted"}`}
-              onClick={() => setScanTarget("m2")}
-            >
-              Meter 2
-            </button>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-display text-2xl font-medium">Readings</h2>
+            <p className="mt-1 text-sm text-muted">
+              Photograph both meters, confirm, and save.
+            </p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={scanning}
-            onClick={() => photoRef.current?.click()}
-          >
-            {scanning ? "Reading photo…" : "Choose photo"}
-          </Button>
-          <input
-            ref={photoRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) handleScan(file);
-              e.target.value = "";
-            }}
-          />
-          {scanResult && (
-            <span className="text-sm text-muted">
-              Read {scanResult.digits ?? "—"} → {scanResult.value ?? "unreadable"} (
-              {scanResult.confidence} confidence
-              {scanResult.label ? `, ${scanResult.label}` : ""}) — filled into{" "}
-              {scanTarget === "m1" ? "Meter 1" : "Meter 2"}, double-check before saving.
-            </span>
-          )}
-          {scanError && <span className="text-sm text-danger">{scanError}</span>}
+          <Button onClick={() => setModalOpen(true)}>Add reading</Button>
         </div>
-
-        <form
-          className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-6"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!date || !time) return;
-            const [y, mo, d] = date.split("-").map(Number);
-            const [h, mi] = time.split(":").map(Number);
-            const dt = new Date(y, mo - 1, d, h, mi, 0, 0);
-            addReading({
-              datetime: dt.getTime(),
-              newInput: m1 === "" ? null : Number(m1),
-              oldInput: m2 === "" ? null : Number(m2),
-              loadKw: load === "" ? null : Number(load),
-              notes: "",
-            });
-          }}
-        >
-          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Date" />
-          <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} aria-label="Time" />
-          <Input type="number" step="0.01" placeholder="Meter 1" value={m1} onChange={(e) => setM1(e.target.value)} />
-          <Input type="number" step="0.01" placeholder="Meter 2" value={m2} onChange={(e) => setM2(e.target.value)} />
-          <Input type="number" step="0.01" placeholder="Inverter kW" value={load} onChange={(e) => setLoad(e.target.value)} />
-          <Button type="submit">Add reading</Button>
-        </form>
       </div>
+
+      {modalOpen && <AddReadingModal onClose={() => setModalOpen(false)} />}
 
       <div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -272,6 +372,7 @@ export function ReadingsView() {
             <Button onClick={exportAll}>Export all data</Button>
             <Button variant="outline" onClick={exportCsv}>Export readings CSV</Button>
             <Button variant="outline" onClick={() => fileRef.current?.click()}>Import</Button>
+            <Button variant="outline" onClick={handleClearAll}>Clear all readings</Button>
             <input
               ref={fileRef}
               type="file"

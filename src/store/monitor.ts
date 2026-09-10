@@ -35,6 +35,7 @@ type State = {
   addReading: (r: Omit<ReadingInput, "id">) => void;
   updateReading: (id: string, r: Partial<ReadingInput>) => void;
   deleteReading: (id: string) => void;
+  clearAllReadings: () => void;
   addNote: (text: string) => void;
   deleteNote: (id: string) => void;
   addCollection: (c: Omit<Collection, "id">) => void;
@@ -82,6 +83,7 @@ export const useMonitor = create<State>()(
           readings: get().readings.map((x) => (x.id === id ? { ...x, ...r } : x)),
         }),
       deleteReading: (id) => set({ readings: get().readings.filter((x) => x.id !== id) }),
+      clearAllReadings: () => set({ readings: [] }),
       addNote: (text) =>
         set({
           notes: [{ id: uid("n"), timestamp: Date.now(), text }, ...get().notes],
