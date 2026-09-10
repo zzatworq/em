@@ -17,8 +17,8 @@
   --color-secondary: #23251f;
   --color-secondary-foreground: #ecebe4;
   --color-ring: #c8c4b8;
-  --color-meter1: #445D78;
-  --color-meter2: #8A7A5D;
+  --color-meter1: #4FD1C5;
+  --color-meter2: #A78BFA;
   --color-danger: #8f4d45;
   --color-danger-fg: #f4e8e4;
 
@@ -38,10 +38,55 @@
   --motion-slow: 400ms;
 }
 
+:root[data-theme="light"] {
+  --color-background: #f7f8f6;
+  --color-surface: #ffffff;
+  --color-elevated: #ffffff;
+  --color-foreground: #17201b;
+  --color-muted: #66716a;
+  --color-subtle: #89928c;
+  --color-border: color-mix(in oklab, var(--color-foreground) 14%, transparent);
+  --color-primary: #17201b;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #e8ece9;
+  --color-secondary-foreground: #17201b;
+  --color-ring: #64746a;
+  --color-danger: #b74d43;
+  --color-danger-fg: #ffffff;
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    --color-background: #f7f8f6;
+    --color-surface: #ffffff;
+    --color-elevated: #ffffff;
+    --color-foreground: #17201b;
+    --color-muted: #66716a;
+    --color-subtle: #89928c;
+    --color-border: color-mix(in oklab, var(--color-foreground) 14%, transparent);
+    --color-primary: #17201b;
+    --color-primary-foreground: #ffffff;
+    --color-secondary: #e8ece9;
+    --color-secondary-foreground: #17201b;
+    --color-ring: #64746a;
+    --color-danger: #b74d43;
+    --color-danger-fg: #ffffff;
+  }
+}
+
 @layer base {
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    color-scheme: dark;
+  }
+  html[data-theme="light"] {
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: light) {
+    html[data-theme="system"] {
+      color-scheme: light;
+    }
   }
   body {
     background: var(--color-background);
