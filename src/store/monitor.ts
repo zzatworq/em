@@ -38,6 +38,7 @@ type State = MonitorData & {
   addCollection: (c: Omit<Collection, "id">) => void;
   saveGeneral: (g: GeneralSettings) => void;
   saveTariffs: (t1: Tariff, t2: Tariff) => void;
+  resetDemo: () => void;
 };
 
 function uid(prefix: string) {
@@ -85,6 +86,7 @@ export const useMonitor = create<State>()((set, get) => ({
   addCollection: (c) => set({ collections: [...get().collections, { ...c, id: uid("c") }], dirty: true }),
   saveGeneral: (general) => set({ general, dirty: true }),
   saveTariffs: (tariff1, tariff2) => set({ tariff1, tariff2, dirty: true }),
+  resetDemo: () => set({ ...empty(), dirty: true }),
 }));
 
 export function useDashboard() {
