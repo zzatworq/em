@@ -76,7 +76,16 @@ export function AppShell() {
       <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6 sm:py-8">
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <nav className="flex gap-1 overflow-x-auto rounded-xl bg-elevated p-1.5 shadow-border">
-            {PAGES.map((page) => <Link key={page.to} to={page.to} activeOptions={{ exact: true }} className={({ isActive }) => cn("inline-flex h-10 shrink-0 items-center rounded-lg px-3 text-sm font-medium transition-colors", isActive ? "bg-foreground text-background" : "text-foreground hover:bg-background")}>{page.label}</Link>)}
+            {PAGES.map((page) => (
+              <Link
+                key={page.to}
+                to={page.to}
+                activeOptions={{ exact: true }}
+                className={cn("inline-flex h-10 shrink-0 items-center rounded-lg px-3 text-sm font-medium transition-colors", "text-foreground hover:bg-background", "data-[status=active]:bg-foreground data-[status=active]:text-background")}
+              >
+                {page.label}
+              </Link>
+            ))}
           </nav>
           {months.length ? <label className="flex h-12 items-center gap-2 rounded-xl bg-elevated px-3 shadow-border"><span className="text-xs font-medium uppercase tracking-wider text-muted">Month</span><select className="bg-transparent text-sm font-medium outline-none" value={selectedMonth ?? months[0]?.value} onChange={(e) => setMonth(e.target.value)}>{months.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}</select></label> : null}
         </div>
