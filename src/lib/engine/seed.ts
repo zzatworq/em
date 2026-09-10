@@ -19,8 +19,8 @@ export function seedReadings(): ReadingInput[] {
   const rows: ReadingInput[] = [];
   let meter1 = 2435;
   let meter2 = 4854;
-  const start = new Date(2026, 6, 13, 18, 10, 0, 0); // 13 Jul 18:10
-  const end = new Date(2026, 8, 8, 8, 0, 0, 0); // 8 Sep morning
+  const start = new Date(2026, 6, 13, 18, 10, 0, 0);
+  const end = new Date(2026, 8, 8, 8, 0, 0, 0);
   let cursor = new Date(start);
   let n = 1;
   while (cursor <= end) {
@@ -57,6 +57,9 @@ export function seedCollections(): Collection[] {
       rawReading: 2598.1,
       extendedDays: 33,
       standardDays: 31,
+      status: "EX",
+      bill: 6729,
+      payment: 6729,
     },
     {
       id: "c-2",
@@ -68,72 +71,37 @@ export function seedCollections(): Collection[] {
       rawReading: 4951.44,
       extendedDays: 33,
       standardDays: 31,
+      status: "EX",
+      bill: 3374,
+      payment: 3374,
     },
   ];
 }
 
 export function seedHistory(): HistoryRow[] {
   const m1: [string, number, number, number][] = [
-    ["Jul 25", 133, 1362, 1419],
-    ["Aug 25", 100, 1112, 1112],
-    ["Sep 25", 131, 1515, 1515],
-    ["Oct 25", 116, 1318, 1318],
-    ["Nov 25", 46, 540, 540],
-    ["Dec 25", 64, 851, 0],
-    ["Jan 26", 55, 1666, 1666],
-    ["Feb 26", 59, 841, 841],
-    ["Mar 26", 84, 1952, 1952],
-    ["Apr 26", 61, 1635, 1635],
-    ["May 26", 51, 1399, 1399],
-    ["Jun 26", 166, 3413, 0],
+    ["Jul 25", 133, 1362, 1419], ["Aug 25", 100, 1112, 1112], ["Sep 25", 131, 1515, 1515],
+    ["Oct 25", 116, 1318, 1318], ["Nov 25", 46, 540, 540], ["Dec 25", 64, 851, 0],
+    ["Jan 26", 55, 1666, 1666], ["Feb 26", 59, 841, 841], ["Mar 26", 84, 1952, 1952],
+    ["Apr 26", 61, 1635, 1635], ["May 26", 51, 1399, 1399], ["Jun 26", 166, 3413, 0],
+    ["Jul 26", 212, 13661, 13661],
   ];
   const m2: [string, number, number, number][] = [
-    ["Jul 25", 111, 1087, 1133],
-    ["Aug 25", 122, 1421, 1421],
-    ["Sep 25", 94, 1022, 1022],
-    ["Oct 25", 104, 1154, 1154],
-    ["Nov 25", 86, 1010, 1010],
-    ["Dec 25", 50, 664, 0],
-    ["Jan 26", 71, 1681, 1681],
-    ["Feb 26", 41, 586, 586],
-    ["Mar 26", 23, 921, 921],
-    ["Apr 26", 37, 1042, 1042],
-    ["May 26", 64, 1339, 1339],
-    ["Jun 26", 165, 3011, 3011],
+    ["Jul 25", 111, 1087, 1133], ["Aug 25", 122, 1421, 1421], ["Sep 25", 94, 1022, 1022],
+    ["Oct 25", 104, 1154, 1154], ["Nov 25", 86, 1010, 1010], ["Dec 25", 50, 664, 0],
+    ["Jan 26", 71, 1681, 1681], ["Feb 26", 41, 586, 586], ["Mar 26", 23, 921, 921],
+    ["Apr 26", 37, 1042, 1042], ["May 26", 64, 1339, 1339], ["Jun 26", 165, 3011, 3011],
+    ["Jul 26", 209, 9437, 9437],
   ];
   return [
-    ...m1.map((r, i) => ({
-      id: `h1-${i}`,
-      month: r[0],
-      meter: "METER 1" as const,
-      status: "EX",
-      units: r[1],
-      bill: r[2],
-      payment: r[3],
-    })),
-    ...m2.map((r, i) => ({
-      id: `h2-${i}`,
-      month: r[0],
-      meter: "METER 2" as const,
-      status: "EX",
-      units: r[1],
-      bill: r[2],
-      payment: r[3],
-    })),
+    ...m1.map((r, i) => ({ id: `h1-${i}`, month: r[0], meter: "METER 1" as const, status: "EX", units: r[1], bill: r[2], payment: r[3] })),
+    ...m2.map((r, i) => ({ id: `h2-${i}`, month: r[0], meter: "METER 2" as const, status: "EX", units: r[1], bill: r[2], payment: r[3] })),
   ];
 }
 
 export function seedNotes(): Note[] {
   return [
-    {
-      id: "n-1",
-      timestamp: new Date(2026, 7, 15, 12, 20).getTime(),
-      text: "Official collection logged 15 Aug around noon. Baseline rolled forward from July.",
-    },
-    {
-      id: "n-2",
-      timestamp: new Date(2026, 7, 22, 19, 5).getTime(),
-      text: "Evening load spike after guests. Inverter stayed on-grid overnight.",
-    },
+    { id: "n-1", timestamp: new Date(2026, 7, 15, 12, 20).getTime(), text: "Official collection logged 15 Aug around noon. Baseline rolled forward from July." },
+    { id: "n-2", timestamp: new Date(2026, 7, 22, 19, 5).getTime(), text: "Evening load spike after guests. Inverter stayed on-grid overnight." },
   ];
 }

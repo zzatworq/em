@@ -68,6 +68,10 @@ export type Collection = {
   rawReading: number;
   extendedDays?: number;
   standardDays?: number;
+  /** Optional official bill information attached to this collection. */
+  status?: string;
+  bill?: number;
+  payment?: number;
 };
 
 export type HistoryRow = {

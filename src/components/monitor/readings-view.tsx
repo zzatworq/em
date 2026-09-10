@@ -2,646 +2,117 @@ import { useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { units } from "@/lib/engine/time";
-import {
-  downloadBackup,
-  downloadReadingsCsv,
-  parseBackup,
-  parseReadingsCsv,
-} from "@/lib/backup";
 import { extractMeterReading, type MeterReadingResult } from "@/lib/meter-vision";
 import { useMonitor } from "@/store/monitor";
 
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
-}
+function clamp(n: number, min: number, max: number) { return Math.max(min, Math.min(max, n)); }
 
 async function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error("Could not read the image file."));
-    reader.readAsDataURL(file);
+    const reader = new FileReader(); reader.onload = () => resolve(reader.result as string); reader.onerror = () => reject(new Error("Could not read the image file.")); reader.readAsDataURL(file);
   });
 }
 
-/**
- * Decode through createImageBitmap with EXIF orientation explicitly applied.
- * This prevents the common mobile-camera problem where the photo looks upright
- * in the gallery but reaches canvas/AI processing sideways.
- */
 async function decodeOriented(file: File): Promise<ImageBitmap | HTMLImageElement> {
   if (typeof createImageBitmap === "function") {
-    try {
-      return await createImageBitmap(file, { imageOrientation: "from-image" });
-    } catch {
-      // Fall through to the browser image decoder.
-    }
+    try { return await createImageBitmap(file, { imageOrientation: "from-image" }); } catch { /* browser fallback */ }
   }
   const dataUrl = await fileToDataUrl(file);
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("Could not decode the image."));
-    img.src = dataUrl;
-  });
+  return new Promise((resolve, reject) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = () => reject(new Error("Could not decode the image.")); img.src = dataUrl; });
 }
 
 function bitmapSize(image: ImageBitmap | HTMLImageElement) {
-  return {
-    width: "naturalWidth" in image ? image.naturalWidth || image.width : image.width,
-    height: "naturalHeight" in image ? image.naturalHeight || image.height : image.height,
-  };
+  return { width: "naturalWidth" in image ? image.naturalWidth || image.width : image.width, height: "naturalHeight" in image ? image.naturalHeight || image.height : image.height };
 }
 
-/** Normalize camera orientation and resize without losing the meter face. */
 async function normalizeImage(file: File, maxDim = 1800): Promise<string> {
   const image = await decodeOriented(file);
   const { width: sourceWidth, height: sourceHeight } = bitmapSize(image);
   const scale = Math.min(1, maxDim / Math.max(sourceWidth, sourceHeight));
-  const width = Math.max(1, Math.round(sourceWidth * scale));
-  const height = Math.max(1, Math.round(sourceHeight * scale));
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Could not create the image canvas.");
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(image, 0, 0, width, height);
+  const width = Math.max(1, Math.round(sourceWidth * scale)); const height = Math.max(1, Math.round(sourceHeight * scale));
+  const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
+  const ctx = canvas.getContext("2d"); if (!ctx) throw new Error("Could not create the image canvas.");
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high"; ctx.drawImage(image, 0, 0, width, height);
   if ("close" in image) image.close();
   return canvas.toDataURL("image/jpeg", 0.9).split(",")[1];
 }
 
-/**
- * Apply the crop returned by Gemini to the normalized source image, then rotate
- * the crop so the numeric display is upright. The result is what the user sees
- * and what can be sent to a second OCR pass later.
- */
-async function cropAndRotateImage(
-  base64: string,
-  crop: MeterReadingResult["crop"],
-  rotation: number,
-): Promise<string> {
-  const dataUrl = `data:image/jpeg;base64,${base64}`;
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("Could not prepare the detected display crop."));
-    image.src = dataUrl;
-  });
-
+async function cropAndRotateImage(base64: string, crop: MeterReadingResult["crop"], rotation: number): Promise<string> {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = () => reject(new Error("Could not prepare the detected display crop.")); image.src = `data:image/jpeg;base64,${base64}`; });
   if (!crop) return base64;
-
-  const x = clamp(crop.x, 0, 100) / 100;
-  const y = clamp(crop.y, 0, 100) / 100;
-  const w = clamp(crop.width, 1, 100) / 100;
-  const h = clamp(crop.height, 1, 100) / 100;
-  const sx = Math.round(img.naturalWidth * x);
-  const sy = Math.round(img.naturalHeight * y);
-  const sw = Math.max(1, Math.min(img.naturalWidth - sx, Math.round(img.naturalWidth * w)));
-  const sh = Math.max(1, Math.min(img.naturalHeight - sy, Math.round(img.naturalHeight * h)));
-
-  const radians = (rotation * Math.PI) / 180;
-  const sin = Math.abs(Math.sin(radians));
-  const cos = Math.abs(Math.cos(radians));
-  const outWidth = Math.max(1, Math.ceil(sw * cos + sh * sin));
-  const outHeight = Math.max(1, Math.ceil(sw * sin + sh * cos));
-  const canvas = document.createElement("canvas");
-  canvas.width = outWidth;
-  canvas.height = outHeight;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Could not create the crop canvas.");
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  ctx.translate(outWidth / 2, outHeight / 2);
-  ctx.rotate(radians);
-  ctx.drawImage(img, sx, sy, sw, sh, -sw / 2, -sh / 2, sw, sh);
+  const x = clamp(crop.x, 0, 100) / 100, y = clamp(crop.y, 0, 100) / 100, w = clamp(crop.width, 1, 100) / 100, h = clamp(crop.height, 1, 100) / 100;
+  const sx = Math.round(img.naturalWidth * x), sy = Math.round(img.naturalHeight * y);
+  const sw = Math.max(1, Math.min(img.naturalWidth - sx, Math.round(img.naturalWidth * w))), sh = Math.max(1, Math.min(img.naturalHeight - sy, Math.round(img.naturalHeight * h)));
+  const radians = (rotation * Math.PI) / 180, sin = Math.abs(Math.sin(radians)), cos = Math.abs(Math.cos(radians));
+  const outWidth = Math.max(1, Math.ceil(sw * cos + sh * sin)), outHeight = Math.max(1, Math.ceil(sw * sin + sh * cos));
+  const canvas = document.createElement("canvas"); canvas.width = outWidth; canvas.height = outHeight;
+  const ctx = canvas.getContext("2d"); if (!ctx) throw new Error("Could not create the crop canvas.");
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high"; ctx.translate(outWidth / 2, outHeight / 2); ctx.rotate(radians); ctx.drawImage(img, sx, sy, sw, sh, -sw / 2, -sh / 2, sw, sh);
   return canvas.toDataURL("image/jpeg", 0.94).split(",")[1];
 }
 
-function pad(n: number) {
-  return String(n).padStart(2, "0");
-}
-
-function nowParts() {
-  const n = new Date();
-  return {
-    date: `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}`,
-    time: `${pad(n.getHours())}:${pad(n.getMinutes())}`,
-  };
-}
-
+function pad(n: number) { return String(n).padStart(2, "0"); }
+function nowParts() { const n = new Date(); return { date: `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}`, time: `${pad(n.getHours())}:${pad(n.getMinutes())}` }; }
 type MeterKey = "m1" | "m2";
-
-type ScanState = {
-  value: string;
-  thumb: string | null;
-  status: "idle" | "scanning" | "done" | "error";
-  result: MeterReadingResult | null;
-  detectedMeter: MeterKey | null;
-  needsChoice: boolean;
-  error: string;
-};
-
-function emptyScan(value = ""): ScanState {
-  return {
-    value,
-    thumb: null,
-    status: "idle",
-    result: null,
-    detectedMeter: null,
-    needsChoice: false,
-    error: "",
-  };
-}
+type ScanState = { value: string; thumb: string | null; status: "idle" | "scanning" | "done" | "error"; result: MeterReadingResult | null; detectedMeter: MeterKey | null; needsChoice: boolean; error: string };
+function emptyScan(value = ""): ScanState { return { value, thumb: null, status: "idle", result: null, detectedMeter: null, needsChoice: false, error: "" }; }
 
 function latestMeterValue(readings: ReturnType<typeof useMonitor.getState>["readings"], meter: MeterKey) {
   const field = meter === "m1" ? "newInput" : "oldInput";
-  return [...readings]
-    .sort((a, b) => b.datetime - a.datetime)
-    .find((r) => r[field] != null)?.[field] ?? null;
+  return [...readings].sort((a, b) => b.datetime - a.datetime).find((r) => r[field] != null)?.[field] ?? null;
 }
 
-/**
- * The two physical meters are not simultaneously active. That gives us a useful
- * identity signal: compare the scanned cumulative value with each meter's last
- * known value. The meter whose reading advanced is normally the photographed
- * active meter. If both are equally plausible, require one explicit choice rather
- * than silently writing a reading into the wrong meter.
- */
 function inferMeter(readings: ReturnType<typeof useMonitor.getState>["readings"], value: number | null): MeterKey | null {
   if (value == null || !Number.isFinite(value)) return null;
-  const p1 = latestMeterValue(readings, "m1");
-  const p2 = latestMeterValue(readings, "m2");
-  if (p1 == null && p2 == null) return null;
-  if (p1 == null) return "m1";
-  if (p2 == null) return "m2";
-
-  const d1 = value - p1;
-  const d2 = value - p2;
-  const eps = 0.05;
-  const plausible = (d: number) => d >= -eps && d <= 500;
-  const a1 = plausible(d1);
-  const a2 = plausible(d2);
-
-  if (a1 && !a2) return "m1";
-  if (a2 && !a1) return "m2";
-  if (!a1 && !a2) return null;
-
-  // If only one meter has moved, that is the active meter.
-  const moved1 = d1 > eps;
-  const moved2 = d2 > eps;
-  if (moved1 && !moved2) return "m1";
-  if (moved2 && !moved1) return "m2";
-
-  // When both are plausible and moving, prefer the closer continuity match.
-  // A near-identical reading is a particularly strong signal.
-  if (Math.abs(d1) < eps && Math.abs(d2) >= eps) return "m1";
-  if (Math.abs(d2) < eps && Math.abs(d1) >= eps) return "m2";
+  const p1 = latestMeterValue(readings, "m1"), p2 = latestMeterValue(readings, "m2");
+  if (p1 == null && p2 == null) return null; if (p1 == null) return "m1"; if (p2 == null) return "m2";
+  const d1 = value - p1, d2 = value - p2, eps = 0.05, plausible = (d: number) => d >= -eps && d <= 500;
+  const a1 = plausible(d1), a2 = plausible(d2);
+  if (a1 && !a2) return "m1"; if (a2 && !a1) return "m2"; if (!a1 && !a2) return null;
+  const moved1 = d1 > eps, moved2 = d2 > eps; if (moved1 && !moved2) return "m1"; if (moved2 && !moved1) return "m2";
+  if (Math.abs(d1) < eps && Math.abs(d2) >= eps) return "m1"; if (Math.abs(d2) < eps && Math.abs(d1) >= eps) return "m2";
   if (Math.abs(d1 - d2) > 0.5) return Math.abs(d1) < Math.abs(d2) ? "m1" : "m2";
   return null;
 }
 
-function ScanResult({
-  scan,
-  onChoose,
-}: {
-  scan: ScanState;
-  onChoose: (meter: MeterKey) => void;
-}) {
+function ScanResult({ scan, onChoose }: { scan: ScanState; onChoose: (meter: MeterKey) => void }) {
   if (scan.status !== "done" || !scan.result) return null;
   const meterLabel = scan.detectedMeter === "m1" ? "Meter 1" : scan.detectedMeter === "m2" ? "Meter 2" : null;
-  return (
-    <div className="mt-3 rounded-xl border border-border bg-background p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <p className="font-medium">
-            {meterLabel ? `${meterLabel} detected` : "Meter identity needs confirmation"}
-          </p>
-          <p className="text-sm text-muted">
-            Reading: <strong>{scan.result.value ?? "unreadable"}</strong> · {scan.result.confidence} confidence
-            {scan.result.label ? ` · ${scan.result.label}` : ""}
-            {scan.result.rotation ? ` · rotated ${scan.result.rotation.toFixed(1)}°` : ""}
-          </p>
-        </div>
-        {scan.needsChoice && (
-          <div className="flex gap-2">
-            <Button type="button" size="sm" variant="outline" onClick={() => onChoose("m1")}>Meter 1</Button>
-            <Button type="button" size="sm" variant="outline" onClick={() => onChoose("m2")}>Meter 2</Button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  return <div className="mt-3 rounded-xl border border-border bg-background p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-medium">{meterLabel ? `${meterLabel} detected` : "Meter identity needs confirmation"}</p><p className="text-sm text-muted">Reading: <strong>{scan.result.value ?? "unreadable"}</strong> · {scan.result.confidence} confidence{scan.result.label ? ` · ${scan.result.label}` : ""}{scan.result.rotation ? ` · rotated ${scan.result.rotation.toFixed(1)}°` : ""}</p></div>{scan.needsChoice && <div className="flex gap-2"><Button type="button" size="sm" variant="outline" onClick={() => onChoose("m1")}>Meter 1</Button><Button type="button" size="sm" variant="outline" onClick={() => onChoose("m2")}>Meter 2</Button></div>}</div></div>;
 }
 
-function MeterScanner({
-  scan,
-  onPhoto,
-  onValueChange,
-  onChoose,
-}: {
-  scan: ScanState;
-  onPhoto: (file: File) => void;
-  onValueChange: (value: string) => void;
-  onChoose: (meter: MeterKey) => void;
-}) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const meterLabel = scan.detectedMeter === "m1" ? "Meter 1" : scan.detectedMeter === "m2" ? "Meter 2" : "Meter";
-  return (
-    <div className="rounded-xl border border-border p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="font-medium">Photograph meter</p>
-          <p className="text-sm text-muted">The app detects which physical meter the photo belongs to.</p>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={scan.status === "scanning"}
-          onClick={() => fileRef.current?.click()}
-        >
-          {scan.status === "scanning" ? "Analyzing…" : scan.thumb ? "Retake photo" : "Photograph"}
-        </Button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) void onPhoto(file);
-            e.target.value = "";
-          }}
-        />
-      </div>
-
-      {scan.thumb && (
-        <img
-          src={`data:image/jpeg;base64,${scan.thumb}`}
-          alt="Detected meter display"
-          className="mt-3 max-h-56 w-full rounded-lg object-contain bg-black/10"
-        />
-      )}
-
-      {scan.status === "done" && scan.result && (
-        <ScanResult scan={scan} onChoose={onChoose} />
-      )}
-      {scan.status === "error" && <p className="mt-2 text-sm text-danger">{scan.error}</p>}
-
-      <Input
-        className="mt-3"
-        type="number"
-        step="0.01"
-        placeholder={scan.detectedMeter ? meterLabel : "Meter reading"}
-        value={scan.value}
-        onChange={(e) => onValueChange(e.target.value)}
-      />
-    </div>
-  );
+function MeterScanner({ scan, onPhoto, onValueChange, onChoose }: { scan: ScanState; onPhoto: (file: File) => void; onValueChange: (value: string) => void; onChoose: (meter: MeterKey) => void }) {
+  const fileRef = useRef<HTMLInputElement>(null); const meterLabel = scan.detectedMeter === "m1" ? "Meter 1" : scan.detectedMeter === "m2" ? "Meter 2" : "Meter";
+  return <div className="rounded-xl border border-border p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-medium">Photograph meter</p><p className="text-sm text-muted">The app detects which physical meter the photo belongs to.</p></div><Button type="button" variant="outline" disabled={scan.status === "scanning"} onClick={() => fileRef.current?.click()}>{scan.status === "scanning" ? "Analyzing…" : scan.thumb ? "Retake photo" : "Photograph"}</Button><input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) void onPhoto(file); e.target.value = ""; }} /></div>{scan.thumb && <img src={`data:image/jpeg;base64,${scan.thumb}`} alt="Detected meter display" className="mt-3 max-h-56 w-full rounded-lg object-contain bg-black/10" />}{scan.status === "done" && scan.result && <ScanResult scan={scan} onChoose={onChoose} />}{scan.status === "error" && <p className="mt-2 text-sm text-danger">{scan.error}</p>}<Input className="mt-3" type="number" step="0.01" placeholder={scan.detectedMeter ? meterLabel : "Meter reading"} value={scan.value} onChange={(e) => onValueChange(e.target.value)} /></div>;
 }
 
 function AddReadingModal({ onClose }: { onClose: () => void }) {
-  const addReading = useMonitor((s) => s.addReading);
-  const readings = useMonitor((s) => s.readings);
-  const latest = useMemo(
-    () => [...readings].sort((a, b) => b.datetime - a.datetime)[0],
-    [readings],
-  );
-
-  const [date, setDate] = useState(nowParts().date);
-  const [time, setTime] = useState(nowParts().time);
-  const [load, setLoad] = useState("");
-  const [scan, setScan] = useState<ScanState>(emptyScan());
-  const [m1, setM1] = useState(String(latest?.newInput ?? ""));
-  const [m2, setM2] = useState(String(latest?.oldInput ?? ""));
+  const addReading = useMonitor((s) => s.addReading); const readings = useMonitor((s) => s.readings);
+  const latest = useMemo(() => [...readings].sort((a, b) => b.datetime - a.datetime)[0], [readings]);
+  const [date, setDate] = useState(nowParts().date), [time, setTime] = useState(nowParts().time), [load, setLoad] = useState("");
+  const [scan, setScan] = useState<ScanState>(emptyScan()); const [m1, setM1] = useState(String(latest?.newInput ?? "")), [m2, setM2] = useState(String(latest?.oldInput ?? ""));
 
   async function handlePhoto(file: File) {
     setScan((prev) => ({ ...prev, status: "scanning", error: "" }));
     try {
-      const base64 = await normalizeImage(file);
-      const result = await extractMeterReading({ data: { imageBase64: base64, mimeType: "image/jpeg" } });
-      const cropped = result.crop
-        ? await cropAndRotateImage(base64, result.crop, result.rotation)
-        : base64;
-      const detectedMeter = inferMeter(readings, result.value);
-      const needsChoice = result.value == null || detectedMeter == null;
-      setScan({
-        value: result.value != null ? String(result.value) : "",
-        thumb: cropped,
-        status: "done",
-        result,
-        detectedMeter,
-        needsChoice,
-        error: "",
-      });
-      if (!needsChoice && result.value != null) {
-        if (detectedMeter === "m1") setM1(String(result.value));
-        if (detectedMeter === "m2") setM2(String(result.value));
-      }
-    } catch (err) {
-      setScan((prev) => ({
-        ...prev,
-        status: "error",
-        error: err instanceof Error ? err.message : "Could not read the meter photo.",
-      }));
-    }
+      const base64 = await normalizeImage(file); const result = await extractMeterReading({ data: { imageBase64: base64, mimeType: "image/jpeg" } });
+      const cropped = result.crop ? await cropAndRotateImage(base64, result.crop, result.rotation) : base64; const detectedMeter = inferMeter(readings, result.value); const needsChoice = result.value == null || detectedMeter == null;
+      setScan({ value: result.value != null ? String(result.value) : "", thumb: cropped, status: "done", result, detectedMeter, needsChoice, error: "" });
+      if (!needsChoice && result.value != null) { if (detectedMeter === "m1") setM1(String(result.value)); if (detectedMeter === "m2") setM2(String(result.value)); }
+    } catch (err) { setScan((prev) => ({ ...prev, status: "error", error: err instanceof Error ? err.message : "Could not read the meter photo." })); }
   }
-
-  function chooseMeter(meter: MeterKey) {
-    setScan((prev) => ({ ...prev, detectedMeter: meter, needsChoice: false }));
-    if (scan.result?.value != null) {
-      if (meter === "m1") setM1(String(scan.result.value));
-      else setM2(String(scan.result.value));
-    }
-  }
-
+  function chooseMeter(meter: MeterKey) { setScan((prev) => ({ ...prev, detectedMeter: meter, needsChoice: false })); if (scan.result?.value != null) { if (meter === "m1") setM1(String(scan.result.value)); else setM2(String(scan.result.value)); } }
   const scanning = scan.status === "scanning";
-
   function handleSave() {
-    if (!date || !time) return;
-    if (scan.status === "done" && scan.needsChoice) return;
-    const [y, mo, d] = date.split("-").map(Number);
-    const [h, mi] = time.split(":").map(Number);
-    const dt = new Date(y, mo - 1, d, h, mi, 0, 0);
-    addReading({
-      datetime: dt.getTime(),
-      newInput: m1 === "" ? null : Number(m1),
-      oldInput: m2 === "" ? null : Number(m2),
-      loadKw: load === "" ? null : Number(load),
-      notes: "",
-    });
-    onClose();
+    if (!date || !time || (scan.status === "done" && scan.needsChoice)) return;
+    const [y, mo, d] = date.split("-").map(Number), [h, mi] = time.split(":").map(Number); const dt = new Date(y, mo - 1, d, h, mi, 0, 0);
+    addReading({ datetime: dt.getTime(), newInput: m1 === "" ? null : Number(m1), oldInput: m2 === "" ? null : Number(m2), loadKw: load === "" ? null : Number(load), notes: "" }); onClose();
   }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
-        <div className="flex items-center justify-between">
-          <h2 className="font-display text-2xl font-medium">Add reading</h2>
-          <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
-        </div>
-        <p className="mt-1 text-sm text-muted">
-          Photograph either meter. The app normalizes camera rotation, crops the numeric display, and uses reading continuity to identify Meter 1 or Meter 2. If the identity is genuinely ambiguous, it asks once rather than writing to the wrong meter.
-        </p>
-
-        <div className="mt-4">
-          <MeterScanner
-            scan={scan}
-            onPhoto={handlePhoto}
-            onValueChange={(v) => {
-              setScan((prev) => ({ ...prev, value: v }));
-              if (scan.detectedMeter === "m1") setM1(v);
-              if (scan.detectedMeter === "m2") setM2(v);
-            }}
-            onChoose={chooseMeter}
-          />
-        </div>
-
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <div className="rounded-xl border border-border p-3">
-            <p className="mb-2 text-sm font-medium">Meter 1</p>
-            <Input type="number" step="0.01" value={m1} onChange={(e) => setM1(e.target.value)} />
-          </div>
-          <div className="rounded-xl border border-border p-3">
-            <p className="mb-2 text-sm font-medium">Meter 2</p>
-            <Input type="number" step="0.01" value={m2} onChange={(e) => setM2(e.target.value)} />
-          </div>
-        </div>
-
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Date" />
-          <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} aria-label="Time" />
-          <Input
-            type="number"
-            step="0.01"
-            placeholder="Inverter kW"
-            value={load}
-            onChange={(e) => setLoad(e.target.value)}
-          />
-        </div>
-
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={handleSave} disabled={scanning || scan.needsChoice}>
-            {scanning ? "Waiting for photo…" : scan.needsChoice ? "Choose meter first" : "Save reading"}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"><div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-elevated p-5 shadow-border sm:p-6"><div className="flex items-center justify-between"><h2 className="font-display text-2xl font-medium">Add reading</h2><Button variant="ghost" size="sm" onClick={onClose}>Close</Button></div><p className="mt-1 text-sm text-muted">Photograph either meter. The app normalizes camera rotation, crops the numeric display, and uses reading continuity to identify Meter 1 or Meter 2. If the identity is genuinely ambiguous, it asks once rather than writing to the wrong meter.</p><div className="mt-4"><MeterScanner scan={scan} onPhoto={handlePhoto} onValueChange={(v) => { setScan((prev) => ({ ...prev, value: v })); if (scan.detectedMeter === "m1") setM1(v); if (scan.detectedMeter === "m2") setM2(v); }} onChoose={chooseMeter} /></div><div className="mt-4 grid gap-3 sm:grid-cols-2"><div className="rounded-xl border border-border p-3"><p className="mb-2 text-sm font-medium">Meter 1</p><Input type="number" step="0.01" value={m1} onChange={(e) => setM1(e.target.value)} /></div><div className="rounded-xl border border-border p-3"><p className="mb-2 text-sm font-medium">Meter 2</p><Input type="number" step="0.01" value={m2} onChange={(e) => setM2(e.target.value)} /></div></div><div className="mt-4 grid gap-3 sm:grid-cols-3"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Date" /><Input type="time" value={time} onChange={(e) => setTime(e.target.value)} aria-label="Time" /><Input type="number" step="0.01" placeholder="Inverter kW" value={load} onChange={(e) => setLoad(e.target.value)} /></div><div className="mt-5 flex justify-end gap-2"><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={handleSave} disabled={scanning || scan.needsChoice}>{scanning ? "Waiting for photo…" : scan.needsChoice ? "Choose meter first" : "Save reading"}</Button></div></div></div>;
 }
 
 export function ReadingsView() {
-  const readings = useMonitor((s) => s.readings);
-  const deleteReading = useMonitor((s) => s.deleteReading);
-  const clearAllReadings = useMonitor((s) => s.clearAllReadings);
-  const markDirty = useMonitor((s) => s.markDirty);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [status, setStatus] = useState<string>("");
-  const [modalOpen, setModalOpen] = useState(false);
-
-  const sorted = useMemo(
-    () => [...readings].sort((a, b) => b.datetime - a.datetime),
-    [readings],
-  );
-
-  const dataForBackup = () => {
-    const s = useMonitor.getState();
-    return {
-      readings: s.readings,
-      collections: s.collections,
-      history: s.history,
-      notes: s.notes,
-      general: s.general,
-      tariff1: s.tariff1,
-      tariff2: s.tariff2,
-    };
-  };
-
-  function exportAll() {
-    downloadBackup(dataForBackup());
-    setStatus("Full application backup exported.");
-  }
-
-  function exportCsv() {
-    downloadReadingsCsv(readings);
-    setStatus("Readings CSV exported.");
-  }
-
-  function handleClearAll() {
-    if (readings.length === 0) return;
-    const confirmed = window.confirm(
-      `Delete all ${readings.length} readings? Export a backup first if you're not sure — this can't be undone.`,
-    );
-    if (!confirmed) return;
-    clearAllReadings();
-    setStatus("All readings cleared.");
-  }
-
-  async function handleImport(file: File) {
-    try {
-      const text = await file.text();
-      if (file.name.toLowerCase().endsWith(".csv")) {
-        const result = parseReadingsCsv(text, useMonitor.getState().readings);
-        if (!result.readings.length) {
-          setStatus(`No new readings found. ${result.duplicates} duplicate rows skipped.`);
-          return;
-        }
-        const confirmed = window.confirm(
-          `Import ${result.readings.length} new readings?\n\n${result.duplicates} duplicate rows will be skipped.`,
-        );
-        if (!confirmed) return;
-        useMonitor.setState({
-          readings: [...useMonitor.getState().readings, ...result.readings].sort(
-            (a, b) => a.datetime - b.datetime,
-          ),
-        });
-        markDirty();
-        setStatus(`Imported ${result.readings.length} readings; skipped ${result.duplicates} duplicates.`);
-        return;
-      }
-
-      const backup = parseBackup(text);
-      const current = useMonitor.getState();
-      const safety = {
-        readings: current.readings,
-        collections: current.collections,
-        history: current.history,
-        notes: current.notes,
-        general: current.general,
-        tariff1: current.tariff1,
-        tariff2: current.tariff2,
-      };
-
-      downloadBackup(safety);
-      const confirmed = window.confirm(
-        `Restore this full backup?\n\nReadings: ${backup.data.readings.length}\nCollections: ${backup.data.collections.length}\nHistory: ${backup.data.history.length}\nNotes: ${backup.data.notes.length}\n\nThe current application data will be replaced. A safety backup has just been downloaded.`,
-      );
-      if (!confirmed) return;
-
-      useMonitor.setState({
-        readings: backup.data.readings,
-        collections: backup.data.collections,
-        history: backup.data.history,
-        notes: backup.data.notes,
-        general: backup.data.general,
-        tariff1: backup.data.tariff1,
-        tariff2: backup.data.tariff2,
-        selectedMonth: null,
-        hourlyOverride: null,
-      });
-      markDirty();
-      setStatus("Full application backup restored successfully.");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Import failed.");
-    }
-  }
-
-  return (
-    <section className="space-y-5">
-      <div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="font-display text-2xl font-medium">Readings</h2>
-            <p className="mt-1 text-sm text-muted">
-              Photograph either meter, confirm the detected reading, and save.
-            </p>
-          </div>
-          <Button onClick={() => setModalOpen(true)}>Add reading</Button>
-        </div>
-      </div>
-
-      {modalOpen && <AddReadingModal onClose={() => setModalOpen(false)} />}
-
-      <div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h3 className="font-display text-xl font-medium">Import & Export</h3>
-            <p className="mt-1 text-sm text-muted">
-              Back up the complete application or exchange readings with Excel and Google Sheets.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={exportAll}>Export all data</Button>
-            <Button variant="outline" onClick={exportCsv}>Export readings CSV</Button>
-            <Button variant="outline" onClick={() => fileRef.current?.click()}>Import</Button>
-            <Button variant="outline" onClick={handleClearAll}>Clear all readings</Button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".json,.csv,application/json,text/csv"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (file) void handleImport(file);
-              }}
-            />
-          </div>
-        </div>
-
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <div className="rounded-xl border border-border p-4">
-            <p className="font-medium">Full application backup</p>
-            <p className="mt-1 text-sm text-muted">
-              JSON containing readings, swaps/collections, monthly history, notes, general settings and both tariffs.
-            </p>
-          </div>
-          <div className="rounded-xl border border-border p-4">
-            <p className="font-medium">Readings CSV</p>
-            <p className="mt-1 text-sm text-muted">
-              Date, time, both meters, inverter reading and notes. CSV imports add new rows and skip duplicates.
-            </p>
-          </div>
-        </div>
-
-        {status ? (
-          <p className="mt-4 rounded-lg bg-background px-3 py-2 text-sm" role="status">{status}</p>
-        ) : null}
-      </div>
-
-      <div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
-        <div className="flex items-center justify-between">
-          <h3 className="font-display text-xl font-medium">Recent readings</h3>
-          <span className="text-sm text-muted">{readings.length} total</span>
-        </div>
-
-        <div className="mt-5 overflow-x-auto">
-          <table className="w-full min-w-[40rem] text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase tracking-wider text-muted">
-                <th className="pb-2 font-medium">When</th>
-                <th className="pb-2 text-right font-medium">Meter 1</th>
-                <th className="pb-2 text-right font-medium">Meter 2</th>
-                <th className="pb-2 text-right font-medium">Load</th>
-                <th className="pb-2 font-medium"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.slice(0, 80).map((r) => (
-                <tr key={r.id} className="border-t border-border">
-                  <td className="py-2.5">
-                    {new Date(r.datetime).toLocaleString("en-GB", {
-                      day: "2-digit",
-                      month: "short",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}
-                  </td>
-                  <td className="py-2.5 text-right tabular-nums">{units(r.newInput)}</td>
-                  <td className="py-2.5 text-right tabular-nums">{units(r.oldInput)}</td>
-                  <td className="py-2.5 text-right tabular-nums">{units(r.loadKw)}</td>
-                  <td className="py-2.5 text-right">
-                    <Button variant="ghost" size="sm" onClick={() => deleteReading(r.id)}>Remove</Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-  );
+  const readings = useMonitor((s) => s.readings); const deleteReading = useMonitor((s) => s.deleteReading); const [modalOpen, setModalOpen] = useState(false);
+  const sorted = useMemo(() => [...readings].sort((a, b) => b.datetime - a.datetime), [readings]);
+  return <section className="space-y-5"><div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-display text-2xl font-medium">Readings</h2><p className="mt-1 text-sm text-muted">Photograph either meter, confirm the detected reading, and save.</p></div><Button onClick={() => setModalOpen(true)}>Add reading</Button></div></div>{modalOpen && <AddReadingModal onClose={() => setModalOpen(false)} />}<div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6"><div className="flex items-center justify-between"><h3 className="font-display text-xl font-medium">Recent readings</h3><span className="text-sm text-muted">{readings.length} total</span></div><div className="mt-5 overflow-x-auto"><table className="w-full min-w-[40rem] text-sm"><thead><tr className="text-left text-xs uppercase tracking-wider text-muted"><th className="pb-2 font-medium">When</th><th className="pb-2 text-right font-medium">Meter 1</th><th className="pb-2 text-right font-medium">Meter 2</th><th className="pb-2 text-right font-medium">Load</th><th className="pb-2 font-medium"></th></tr></thead><tbody>{sorted.slice(0, 80).map((r) => <tr key={r.id} className="border-t border-border"><td className="py-2.5">{new Date(r.datetime).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })}</td><td className="py-2.5 text-right tabular-nums">{units(r.newInput)}</td><td className="py-2.5 text-right tabular-nums">{units(r.oldInput)}</td><td className="py-2.5 text-right tabular-nums">{units(r.loadKw)}</td><td className="py-2.5 text-right"><Button variant="ghost" size="sm" onClick={() => deleteReading(r.id)}>Remove</Button></td></tr>)}</tbody></table></div></div></section>;
 }
