@@ -27,6 +27,7 @@ type State = MonitorData & {
   setAssume5050: (v: boolean) => void;
   setHourlyDay: (v: string) => void;
   replaceData: (data: MonitorData) => void;
+  markDirty: () => void;
   markSaved: () => void;
   addReading: (r: Omit<ReadingInput, "id">) => void;
   updateReading: (id: string, r: Partial<ReadingInput>) => void;
@@ -73,6 +74,7 @@ export const useMonitor = create<State>()((set, get) => ({
     });
   },
   replaceData: (data) => set({ ...data, hydrated: true, dirty: false, selectedMonth: null, hourlyOverride: null }),
+  markDirty: () => set({ dirty: true }),
   markSaved: () => set({ dirty: false }),
   addReading: (r) => set({ readings: [...get().readings, { ...r, id: uid("r") }], dirty: true }),
   updateReading: (id, r) => set({ readings: get().readings.map((x) => (x.id === id ? { ...x, ...r } : x)), dirty: true }),
