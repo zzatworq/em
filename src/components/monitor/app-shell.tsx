@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Zap } from "lucide-react";
 import { BillView } from "@/components/monitor/bill-view";
 import { HistoryView } from "@/components/monitor/history-view";
@@ -8,6 +8,7 @@ import { SettingsView } from "@/components/monitor/settings-view";
 import { SummaryView } from "@/components/monitor/summary-view";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import { loadMonitorData, saveMonitorData, type MonitorData } from "@/lib/monitor-data";
 import { useDashboard, useMonitor, type TabId } from "@/store/monitor";
 
 const TABS: { id: TabId; label: string }[] = [
@@ -18,6 +19,19 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "notes", label: "Notes" },
   { id: "settings", label: "Settings" },
 ];
+
+function dataFromStore(): MonitorData {
+  const s = useMonitor.getState();
+  return {
+    readings: s.readings,
+    collections: s.collections,
+    history: s.history,
+    notes: s.notes,
+    general: s.general,
+    tariff1: s.tariff1,
+    tariff2: s.tariff2,
+  };
+}
 
 function ShellBody() {
   const tab = useMonitor((s) => s.tab);
@@ -70,9 +84,7 @@ function ShellBody() {
                 onChange={(e) => setMonth(e.target.value)}
               >
                 {months.map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
-                  </option>
+                  <option key={m.value} value={m.value}>{m.label}</option>
                 ))}
               </select>
             </label>
@@ -91,28 +103,63 @@ function ShellBody() {
 }
 
 export function AppShell() {
-  const [ready, setReady] = useState(false);
+  const hydrated = useMonitor((s) => s.hydrated);
+  const dirty = useMonitor((s) => s.dirty);
+  const replaceData = useMonitor((s) => s.replaceData);
+  const markSaved = useMonitor((s) => s.markSaved);
+  const saveTimer = useRef<number | null>(null);
+  const saving = useRef(false);
+  const [error, setError] = useState("");
+
   useEffect(() => {
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      setReady(true);
+    let cancelled = false;
+    loadMonitorData()
+      .then((data) => {
+        if (!cancelled) replaceData(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Could not load shared meter data.");
+      });
+    return () => { cancelled = true; };
+  }, [replaceData]);
+
+  useEffect(() => {
+    if (!hydrated || !dirty) return;
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(async () => {
+      if (saving.current) return;
+      saving.current = true;
+      try {
+        await saveMonitorData({ data: dataFromStore() });
+        markSaved();
+        setError("");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not save shared meter data.");
+      } finally {
+        saving.current = false;
+      }
+    }, 400);
+    return () => {
+      if (saveTimer.current) window.clearTimeout(saveTimer.current);
     };
-    try {
-      Promise.resolve(useMonitor.persist.rehydrate() as unknown).finally(finish);
-    } catch {
-      finish();
-    }
-    const t = window.setTimeout(finish, 300);
-    return () => window.clearTimeout(t);
-  }, []);
-  if (!ready) {
+  }, [dirty, hydrated, markSaved]);
+
+  if (!hydrated) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-background text-muted">
-        <p className="text-sm">Loading meter data…</p>
+        <p className="text-sm">{error ? `Loading failed: ${error}` : "Loading shared meter data…"}</p>
       </div>
     );
   }
-  return <ShellBody />;
+
+  return (
+    <>
+      {error ? (
+        <div className="sticky top-0 z-50 bg-red-600 px-4 py-2 text-center text-sm text-white">
+          {error}
+        </div>
+      ) : null}
+      <ShellBody />
+    </>
+  );
 }
