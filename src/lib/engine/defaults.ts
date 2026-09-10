@@ -17,6 +17,10 @@ export const DEFAULT_GENERAL: GeneralSettings = {
   solarStartMinute: 30,
   solarEndHour: 17,
   solarEndMinute: 30,
+  theme: "system",
+  meter1Color: "#4FD1C5",
+  meter2Color: "#A78BFA",
+  v1Url: "",
 };
 
 const DEFAULT_ADJUSTMENTS: Adjustments = {
