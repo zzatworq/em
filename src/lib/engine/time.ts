@@ -2,26 +2,17 @@ import type { GeneralSettings } from "./types";
 import { ESTIMATION_PROFILE } from "./defaults";
 
 const DAY_MS = 86400000;
+type BillingClock = Pick<GeneralSettings, "billingHour" | "billingMinute">;
 
 export function getBillingPeriodStart(datetime: Date, gs: GeneralSettings): Date {
   const start = new Date(
-    datetime.getFullYear(),
-    datetime.getMonth(),
-    gs.billingDay,
-    gs.billingHour,
-    gs.billingMinute,
-    0,
-    0,
+    datetime.getFullYear(), datetime.getMonth(), gs.billingDay,
+    gs.billingHour, gs.billingMinute, 0, 0,
   );
   if (datetime < start) {
     return new Date(
-      datetime.getFullYear(),
-      datetime.getMonth() - 1,
-      gs.billingDay,
-      gs.billingHour,
-      gs.billingMinute,
-      0,
-      0,
+      datetime.getFullYear(), datetime.getMonth() - 1, gs.billingDay,
+      gs.billingHour, gs.billingMinute, 0, 0,
     );
   }
   return start;
@@ -29,25 +20,15 @@ export function getBillingPeriodStart(datetime: Date, gs: GeneralSettings): Date
 
 export function addMonth(date: Date): Date {
   return new Date(
-    date.getFullYear(),
-    date.getMonth() + 1,
-    date.getDate(),
-    date.getHours(),
-    date.getMinutes(),
-    date.getSeconds(),
-    date.getMilliseconds(),
+    date.getFullYear(), date.getMonth() + 1, date.getDate(),
+    date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds(),
   );
 }
 
-export function getFivePmDayStart(datetime: Date, gs: GeneralSettings): Date {
+export function getFivePmDayStart(datetime: Date, gs: BillingClock): Date {
   const d = new Date(
-    datetime.getFullYear(),
-    datetime.getMonth(),
-    datetime.getDate(),
-    gs.billingHour,
-    gs.billingMinute,
-    0,
-    0,
+    datetime.getFullYear(), datetime.getMonth(), datetime.getDate(),
+    gs.billingHour, gs.billingMinute, 0, 0,
   );
   if (datetime < d) d.setDate(d.getDate() - 1);
   return d;
@@ -55,13 +36,8 @@ export function getFivePmDayStart(datetime: Date, gs: GeneralSettings): Date {
 
 export function billingPeriodLengthDays(periodEnd: Date): number {
   const start = new Date(
-    periodEnd.getFullYear(),
-    periodEnd.getMonth() - 1,
-    periodEnd.getDate(),
-    periodEnd.getHours(),
-    periodEnd.getMinutes(),
-    periodEnd.getSeconds(),
-    periodEnd.getMilliseconds(),
+    periodEnd.getFullYear(), periodEnd.getMonth() - 1, periodEnd.getDate(),
+    periodEnd.getHours(), periodEnd.getMinutes(), periodEnd.getSeconds(), periodEnd.getMilliseconds(),
   );
   const days = (periodEnd.getTime() - start.getTime()) / DAY_MS;
   return days > 0 ? days : 30;
@@ -73,12 +49,8 @@ export function formatBillingMonth(date: Date): string {
 
 export function formatDateTime(date: Date): string {
   return date.toLocaleString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
+    day: "2-digit", month: "short", year: "numeric",
+    hour: "numeric", minute: "2-digit", hour12: true,
   });
 }
 
