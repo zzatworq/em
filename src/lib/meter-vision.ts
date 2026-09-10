@@ -2,16 +2,18 @@ import { createServerFn } from "@tanstack/react-start";
 import { env } from "cloudflare:workers";
 
 const METER_SYSTEM_PROMPT = `You inspect utility meter photographs. Respond with ONLY compact JSON, with no markdown fences or commentary:
-{"meterDetected":true|false,"displayDetected":true|false,"digits":"digits only or null","label":"visible meter brand/model or null","confidence":"high|medium|low","crop":{"x":0,"y":0,"width":0,"height":0}|null}
-Image coordinates are percentages (0-100) of the full image. crop must tightly cover the numeric reading display. If you cannot locate the display, crop is null. Read every visible digit exactly. The final two digits are decimal digits.`;
+{"meterDetected":true|false,"displayDetected":true|false,"digits":"digits only or null","label":"visible meter brand/model or null","identity":"visible serial/model/label text useful for distinguishing this physical meter, or null","confidence":"high|medium|low","rotation":0,"crop":{"x":0,"y":0,"width":0,"height":0}|null}
+Image coordinates are percentages (0-100) of the full image. crop must tightly cover the complete numeric reading display, including all reading digits but as little surrounding area as practical. rotation is the clockwise angle in degrees needed to make the display upright after cropping; normally between -45 and 45. If the display is already upright use 0. If you cannot locate the display, crop is null and rotation is 0. Read every visible digit exactly. The final two digits are decimal digits. identity should contain any visible serial number, meter number, model number, or distinctive printed label that can distinguish this physical meter from another meter.`;
 
 export type MeterReadingResult = {
   meterDetected: boolean;
   displayDetected: boolean;
   digits: string | null;
   label: string | null;
+  identity: string | null;
   confidence: "high" | "medium" | "low";
   value: number | null;
+  rotation: number;
   crop: { x: number; y: number; width: number; height: number } | null;
 };
 
@@ -56,7 +58,7 @@ export const extractMeterReading = createServerFn({ method: "POST" })
           contents: [{
             role: "user",
             parts: [
-              { text: "Detect the meter, locate its numeric reading display, and read all digits." },
+              { text: "Detect the physical meter and its numeric display. Locate the display, estimate the correction rotation, and read every digit." },
               { inlineData: { mimeType, data: data.imageBase64 } },
             ],
           }],
@@ -108,13 +110,19 @@ export const extractMeterReading = createServerFn({ method: "POST" })
         }
       : null;
 
+    const rotation = typeof result.rotation === "number" && Number.isFinite(result.rotation)
+      ? Math.max(-45, Math.min(45, result.rotation))
+      : 0;
+
     return {
       meterDetected: result.meterDetected === true,
       displayDetected: result.displayDetected === true,
       digits,
       label: typeof result.label === "string" ? result.label : null,
+      identity: typeof result.identity === "string" ? result.identity : null,
       confidence: result.confidence === "high" || result.confidence === "low" ? result.confidence : "medium",
       value: toDecimalValue(digits),
+      rotation,
       crop,
     };
   });
