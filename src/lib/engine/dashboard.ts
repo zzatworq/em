@@ -211,19 +211,22 @@ function projectMonth(
   let partialFullNew = 0;
   let partialFullOld = 0;
   if (currentDay) {
-    const gsDummy = {
+    const gsDummy: Pick<GeneralSettings, "billingHour" | "billingMinute"> = {
       billingHour: billingStart.getHours(),
       billingMinute: billingStart.getMinutes(),
     };
     const dayStart = getFivePmDayStart(now, {
+      ...gsDummy,
       goalCombinedUnits: 0,
       billingDay: 13,
-      billingHour: gsDummy.billingHour,
-      billingMinute: gsDummy.billingMinute,
       solarStartHour: 7,
       solarStartMinute: 30,
       solarEndHour: 17,
       solarEndMinute: 30,
+      theme: "system",
+      meter1Color: "#4FD1C5",
+      meter2Color: "#A78BFA",
+      v1Url: "",
     });
     const dayEnd = new Date(dayStart);
     dayEnd.setDate(dayEnd.getDate() + 1);
@@ -360,122 +363,37 @@ export function computeDashboard(opts: {
     : {
         newMeter: billingNew === "" ? 0 : Number(billingNew),
         oldMeter: billingOld === "" ? 0 : Number(billingOld),
-        total: (billingNew === "" ? 0 : Number(billingNew)) + (billingOld === "" ? 0 : Number(billingOld)),
+        total: billingTotal === "" ? 0 : Number(billingTotal),
       };
 
-  const periodReadings = readings.filter(
-    (r) => r.datetime >= billingStart.getTime() && r.datetime < billingEnd.getTime(),
-  );
-  const latest = (periodReadings.length ? periodReadings : readings).at(-1) ?? null;
-  const last24h = last24(readings, now);
-
+  const last = last24(readings, now);
+  const goal = goalPace(billingTotal === "" ? 0 : Number(billingTotal), billingStart, billingEnd, periodNow, gs.goalCombinedUnits);
+  const bill1 = calculateMeterBill(billingNew === "" ? 0 : Number(billingNew), tariff1);
+  const bill2 = calculateMeterBill(billingOld === "" ? 0 : Number(billingOld), tariff2);
   const carry1 = carryFromCollections("METER 1", billingStart, collections, readings);
   const carry2 = carryFromCollections("METER 2", billingStart, collections, readings);
-  const carryForwardNew = carry1?.carryForward ?? 0;
-  const carryForwardOld = carry2?.carryForward ?? 0;
-  const totalConsumptionNew = (billingNew === "" ? 0 : billingNew) + carryForwardNew;
-  const totalConsumptionOld = (billingOld === "" ? 0 : billingOld) + carryForwardOld;
-  const totalConsumptionCombined = totalConsumptionNew + totalConsumptionOld;
-
-  const currentBill1 = calculateMeterBill(billingNew === "" ? 0 : billingNew, tariff1);
-  const currentBill2 = calculateMeterBill(billingOld === "" ? 0 : billingOld, tariff2);
-  const projectedBill1 = calculateMeterBill(projection.newMeter, tariff1);
-  const projectedBill2 = calculateMeterBill(projection.oldMeter, tariff2);
-  const assumedUnits = isCurrent ? projection.total : Number(billingTotal || 0);
-  const half = assumedUnits / 2;
-  const split1 = calculateMeterBill(half, tariff1);
-  const split2 = calculateMeterBill(half, tariff2);
-
-  const periodStd = billingPeriodLengthDays(billingStart);
-  const pro1 = calculateProRata(startR.newReading, latest?.newReading ?? null, elapsedDays, periodStd);
-  const pro2 = calculateProRata(startR.oldReading, latest?.oldReading ?? null, elapsedDays, periodStd);
-
-  const hourlyStart = isCurrent
-    ? new Date(now.getTime() - 24 * 60 * 60 * 1000)
-    : getFivePmDayStart(billingEnd, gs);
-  const hourlyEnd = isCurrent ? now : billingEnd;
-  const hourly = getHourlyChartData(readings, hourlyStart, hourlyEnd);
-
-  const hourlyDays = daily
-    .filter((d) => d.total !== "")
-    .map((d) => ({
-      value: d.date,
-      label: new Date(d.date + "T00:00:00").toLocaleDateString("en-GB", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      }),
-    }));
-  if (isCurrent) hourlyDays.unshift({ value: "last24", label: "Last 24 hours" });
-
-  const shareBase = billingTotal === "" || billingTotal <= 0 ? 0 : billingTotal;
 
   return {
     empty: false as const,
-    latestDate: latest ? formatDateTime(new Date(latest.datetime)) : formatBillingMonth(billingStart),
-    latestTimestamp: latest?.datetime ?? billingStart.getTime(),
-    currentNew: latest?.newReading ?? null,
-    currentOld: latest?.oldReading ?? null,
-    initialNew: startR.newReading,
-    initialOld: startR.oldReading,
-    billingNew,
-    billingOld,
-    billingTotal,
-    elapsedDays,
-    averageNew: billingNew !== "" && elapsedDays > 0 ? billingNew / elapsedDays : "",
-    averageOld: billingOld !== "" && elapsedDays > 0 ? billingOld / elapsedDays : "",
-    last24Total: last24h.total,
-    last24New: last24h.newMeter,
-    last24Old: last24h.oldMeter,
-    projectedNew: projection.newMeter,
-    projectedOld: projection.oldMeter,
-    projectedTotal: projection.total,
-    meter1Share: shareBase ? (Number(billingNew || 0) / shareBase) * 100 : 0,
-    meter2Share: shareBase ? (Number(billingOld || 0) / shareBase) * 100 : 0,
-    carryForwardNew,
-    carryForwardOld,
-    totalConsumptionNew,
-    totalConsumptionOld,
-    totalConsumptionCombined,
-    currentBillNew: currentBill1.total,
-    currentBillOld: currentBill2.total,
-    currentBillDetails: { meter1: currentBill1, meter2: currentBill2 },
-    projectedBillDetails: { meter1: split1, meter2: split2 },
-    projectedBillActualDetails: { meter1: projectedBill1, meter2: projectedBill2 },
-    projectedBill5050Total: split1.total + split2.total,
-    projectedBillActualTotal: projectedBill1.total + projectedBill2.total,
-    proRata: { meter1: pro1, meter2: pro2, standardDays: periodStd },
+    billingStart,
+    billingEnd,
     billingMonth: formatBillingMonth(billingEnd),
-    billingStart: formatDateTime(billingStart),
-    billingEnd: formatDateTime(billingEnd),
-    billingProgress: isCurrent
-      ? Math.max(0, Math.min(100, ((now.getTime() - billingStart.getTime()) / (billingEnd.getTime() - billingStart.getTime())) * 100))
-      : 100,
-    goalPace: goalPace(totalConsumptionCombined, billingStart, billingEnd, isCurrent ? now : billingEnd, gs.goalCombinedUnits),
+    elapsedDays,
+    fullPeriodDays,
+    billing: {
+      newMeter: billingNew,
+      oldMeter: billingOld,
+      total: billingTotal,
+    },
+    last24: last,
+    projection,
+    goal,
     daily,
-    hourly,
-    hourlyDay: isCurrent ? "last24" : hourlyDays.at(-1)?.value ?? "",
-    hourlyDays,
-    isCurrentBillingMonth: isCurrent,
-    availableMonthKey: ymd(billingStart),
-    effectiveCurrentRate:
-      (isCurrent ? projection.total : Number(billingTotal || 0)) > 0
-        ? (isCurrent ? split1.total + split2.total : currentBill1.total + currentBill2.total) /
-          (isCurrent ? projection.total : Number(billingTotal || 0))
-        : 0,
-    carried: readings,
+    bill1,
+    bill2,
+    carry1,
+    carry2,
+    readings,
+    generatedAt: formatDateTime(now),
   };
-}
-
-export function hourlyForDay(inputs: ReadingInput[], dayKey: string, now: Date, gs: GeneralSettings) {
-  const readings = applyCarryForward([...inputs].sort((a, b) => a.datetime - b.datetime));
-  if (dayKey === "last24") {
-    return getHourlyChartData(readings, new Date(now.getTime() - 24 * 3600000), now);
-  }
-  const dayStart = new Date(`${dayKey}T${String(gs.billingHour).padStart(2, "0")}:${String(gs.billingMinute).padStart(2, "0")}:00`);
-  const dayEnd = new Date(dayStart);
-  dayEnd.setDate(dayEnd.getDate() + 1);
-  let end = dayEnd;
-  if (now >= dayStart && now < dayEnd) end = now;
-  return getHourlyChartData(readings, dayStart, end);
 }
