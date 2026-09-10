@@ -42,7 +42,10 @@ function normalize(value: unknown): MonitorData {
     collections: Array.isArray(v.collections) ? v.collections : fallback.collections,
     history: Array.isArray(v.history) ? v.history : fallback.history,
     notes: Array.isArray(v.notes) ? v.notes : fallback.notes,
-    general: v.general && typeof v.general === "object" ? v.general : fallback.general,
+    general:
+      v.general && typeof v.general === "object"
+        ? { ...fallback.general, ...v.general }
+        : fallback.general,
     tariff1: v.tariff1 && typeof v.tariff1 === "object" ? v.tariff1 : fallback.tariff1,
     tariff2: v.tariff2 && typeof v.tariff2 === "object" ? v.tariff2 : fallback.tariff2,
   };
