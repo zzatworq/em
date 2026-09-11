@@ -143,6 +143,7 @@ export function HistoryView() {
             setRaw("");
             setBill("");
             setPayment("");
+            setCollectionOpen(false);
           }}
         >
           <div>
