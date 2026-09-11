@@ -18,6 +18,14 @@ test("unprotected slab uses all-units applicable rate", () => {
   assert.ok(b.total > b.energy + b.fixed);
 });
 
+test("sub-1-unit consumption bills at the cheapest slab, not the most expensive", () => {
+  const tariff = defaultTariff();
+  const b = calculateMeterBill(0.5, tariff);
+  const cheapest = tariff.slabs[0];
+  assert.equal(b.rate, cheapest.rate);
+  assert.equal(b.slab, `${cheapest.min}-${cheapest.max}`);
+});
+
 test("pro-rata floors billed units", () => {
   const p = calculateProRata(100, 163.4, 33, 30);
   assert.ok(p);
