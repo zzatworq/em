@@ -19,8 +19,16 @@ export function getBillingPeriodStart(datetime: Date, gs: GeneralSettings): Date
 }
 
 export function addMonth(date: Date): Date {
+  // new Date(y, m+1, day, ...) silently overflows into the month after next
+  // when the target month is shorter than `day` (e.g. day=30 in a
+  // 28/29-day February rolls into March). Clamp to the target month's
+  // actual last day instead, so a billing day near month-end doesn't
+  // silently stretch the period by a few extra days.
+  const targetMonth = date.getMonth() + 1;
+  const daysInTargetMonth = new Date(date.getFullYear(), targetMonth + 1, 0).getDate();
+  const day = Math.min(date.getDate(), daysInTargetMonth);
   return new Date(
-    date.getFullYear(), date.getMonth() + 1, date.getDate(),
+    date.getFullYear(), targetMonth, day,
     date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds(),
   );
 }
