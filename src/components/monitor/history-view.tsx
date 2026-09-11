@@ -23,7 +23,22 @@ function HistoryTable({ title, rows }: { title: string; rows: HistoryRow[] }) {
         <h3 className="font-medium">{title}</h3>
         <span className="text-xs text-muted">{sorted.length} periods</span>
       </div>
-      <div className="overflow-x-auto">
+      <div className="grid gap-2 sm:hidden">
+        {sorted.map((r) => (
+          <div key={r.id} className="rounded-xl border border-border p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">{r.month}</span>
+              <span className="text-xs font-medium text-muted">{r.status}</span>
+            </div>
+            <dl className="mt-2 grid grid-cols-3 gap-2 text-sm">
+              <div><dt className="text-xs text-muted">Units</dt><dd className="tabular-nums">{units(r.units, 0)}</dd></div>
+              <div><dt className="text-xs text-muted">Bill</dt><dd className="tabular-nums">{money(r.bill)}</dd></div>
+              <div><dt className="text-xs text-muted">Paid</dt><dd className="tabular-nums">{money(r.payment)}</dd></div>
+            </dl>
+          </div>
+        ))}
+      </div>
+      <div className="hidden overflow-x-auto sm:block">
         <table className="w-full min-w-[28rem] text-sm">
           <thead>
             <tr className="text-left text-xs uppercase tracking-wider text-muted">
