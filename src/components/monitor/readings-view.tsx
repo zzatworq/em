@@ -25,7 +25,7 @@ function bitmapSize(image: ImageBitmap | HTMLImageElement) {
   return { width: "naturalWidth" in image ? image.naturalWidth || image.width : image.width, height: "naturalHeight" in image ? image.naturalHeight || image.height : image.height };
 }
 
-async function normalizeImage(file: File, maxDim = 1800): Promise<string> {
+async function normalizeImage(file: File, maxDim = 2200): Promise<string> {
   const image = await decodeOriented(file);
   const { width: sourceWidth, height: sourceHeight } = bitmapSize(image);
   const scale = Math.min(1, maxDim / Math.max(sourceWidth, sourceHeight));
@@ -41,14 +41,22 @@ async function cropAndRotateImage(base64: string, crop: MeterReadingResult["crop
   const img = await new Promise<HTMLImageElement>((resolve, reject) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = () => reject(new Error("Could not prepare the detected display crop.")); image.src = `data:image/jpeg;base64,${base64}`; });
   if (!crop) return base64;
   const x = clamp(crop.x, 0, 100) / 100, y = clamp(crop.y, 0, 100) / 100, w = clamp(crop.width, 1, 100) / 100, h = clamp(crop.height, 1, 100) / 100;
-  const sx = Math.round(img.naturalWidth * x), sy = Math.round(img.naturalHeight * y);
-  const sw = Math.max(1, Math.min(img.naturalWidth - sx, Math.round(img.naturalWidth * w))), sh = Math.max(1, Math.min(img.naturalHeight - sy, Math.round(img.naturalHeight * h)));
+  const rawX = img.naturalWidth * x, rawY = img.naturalHeight * y, rawW = img.naturalWidth * w, rawH = img.naturalHeight * h;
+  // Give AI coordinates a small safety margin so a tight crop cannot cut off digits.
+  const padX = rawW * 0.08, padY = rawH * 0.18;
+  const sx = Math.max(0, Math.floor(rawX - padX)), sy = Math.max(0, Math.floor(rawY - padY));
+  const ex = Math.min(img.naturalWidth, Math.ceil(rawX + rawW + padX)), ey = Math.min(img.naturalHeight, Math.ceil(rawY + rawH + padY));
+  const sw = Math.max(1, ex - sx), sh = Math.max(1, ey - sy);
   const radians = (rotation * Math.PI) / 180, sin = Math.abs(Math.sin(radians)), cos = Math.abs(Math.cos(radians));
   const outWidth = Math.max(1, Math.ceil(sw * cos + sh * sin)), outHeight = Math.max(1, Math.ceil(sw * sin + sh * cos));
   const canvas = document.createElement("canvas"); canvas.width = outWidth; canvas.height = outHeight;
   const ctx = canvas.getContext("2d"); if (!ctx) throw new Error("Could not create the crop canvas.");
-  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high"; ctx.translate(outWidth / 2, outHeight / 2); ctx.rotate(radians); ctx.drawImage(img, sx, sy, sw, sh, -sw / 2, -sh / 2, sw, sh);
-  return canvas.toDataURL("image/jpeg", 0.94).split(",")[1];
+  // Rotated canvas corners are transparent by default and become black in JPEG. Paint them first.
+  ctx.fillStyle = "#f5f5f5"; ctx.fillRect(0, 0, outWidth, outHeight);
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
+  ctx.translate(outWidth / 2, outHeight / 2); ctx.rotate(radians);
+  ctx.drawImage(img, sx, sy, sw, sh, -sw / 2, -sh / 2, sw, sh);
+  return canvas.toDataURL("image/jpeg", 0.96).split(",")[1];
 }
 
 function pad(n: number) { return String(n).padStart(2, "0"); }
@@ -83,7 +91,7 @@ function ScanResult({ scan, onChoose }: { scan: ScanState; onChoose: (meter: Met
 
 function MeterScanner({ scan, onPhoto, onValueChange, onChoose }: { scan: ScanState; onPhoto: (file: File) => void; onValueChange: (value: string) => void; onChoose: (meter: MeterKey) => void }) {
   const fileRef = useRef<HTMLInputElement>(null); const meterLabel = scan.detectedMeter === "m1" ? "Meter 1" : scan.detectedMeter === "m2" ? "Meter 2" : "Meter";
-  return <div className="rounded-xl border border-border p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-medium">Photograph meter</p><p className="text-sm text-muted">The app detects which physical meter the photo belongs to.</p></div><Button type="button" variant="outline" disabled={scan.status === "scanning"} onClick={() => fileRef.current?.click()}>{scan.status === "scanning" ? "Analyzing…" : scan.thumb ? "Retake photo" : "Photograph"}</Button><input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) void onPhoto(file); e.target.value = ""; }} /></div>{scan.thumb && <img src={`data:image/jpeg;base64,${scan.thumb}`} alt="Detected meter display" className="mt-3 max-h-56 w-full rounded-lg object-contain bg-black/10" />}{scan.status === "done" && scan.result && <ScanResult scan={scan} onChoose={onChoose} />}{scan.status === "error" && <p className="mt-2 text-sm text-danger">{scan.error}</p>}<Input className="mt-3" type="number" step="0.01" placeholder={scan.detectedMeter ? meterLabel : "Meter reading"} value={scan.value} onChange={(e) => onValueChange(e.target.value)} /></div>;
+  return <div className="rounded-xl border border-border p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-medium">Photograph meter</p><p className="text-sm text-muted">The app detects which physical meter the photo belongs to.</p></div><Button type="button" variant="outline" disabled={scan.status === "scanning"} onClick={() => fileRef.current?.click()}>{scan.status === "scanning" ? "Analyzing…" : scan.thumb ? "Retake photo" : "Photograph"}</Button><input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) void onPhoto(file); e.target.value = ""; }} /></div>{scan.thumb && <img src={`data:image/jpeg;base64,${scan.thumb}`} alt="Detected meter display" className="mt-3 max-h-72 w-full rounded-lg object-contain bg-background" />}{scan.status === "done" && scan.result && <ScanResult scan={scan} onChoose={onChoose} />}{scan.status === "error" && <p className="mt-2 text-sm text-danger">{scan.error}</p>}<Input className="mt-3" type="number" step="0.01" placeholder={scan.detectedMeter ? meterLabel : "Meter reading"} value={scan.value} onChange={(e) => onValueChange(e.target.value)} /></div>;
 }
 
 function AddReadingModal({ onClose }: { onClose: () => void }) {
