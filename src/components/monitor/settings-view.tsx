@@ -6,6 +6,13 @@ import type { GeneralSettings, Tariff } from "@/lib/engine/types";
 import { useMonitor } from "@/store/monitor";
 
 function Field({ label, value, onChange, type = "text" }: { label: string; value: string | number; onChange: (v: string) => void; type?: string }) { return <div><Label>{label}</Label><Input className="mt-1" type={type} value={value} onChange={(e) => onChange(e.target.value)} /></div>; }
+function TimeField({ label, hour, minute, onChange }: { label: string; hour: number; minute: number; onChange: (hour: number, minute: number) => void }) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return <div><Label>{label}</Label><Input className="mt-1" type="time" value={`${pad(hour)}:${pad(minute)}`} onChange={(e) => { const [h, m] = e.target.value.split(":").map(Number); if (!Number.isNaN(h) && !Number.isNaN(m)) onChange(h, m); }} /></div>;
+}
+function RangeField({ label, from, to, onFromChange, onToChange }: { label: string; from: number; to: number; onFromChange: (v: number) => void; onToChange: (v: number) => void }) {
+  return <div><Label>{label}</Label><div className="mt-1 flex items-center gap-2"><Input type="number" min={0} max={23} value={from} onChange={(e) => onFromChange(Number(e.target.value))} aria-label={`${label} start`} /><span className="text-sm text-muted">–</span><Input type="number" min={0} max={23} value={to} onChange={(e) => onToChange(Number(e.target.value))} aria-label={`${label} end`} /></div></div>;
+}
 function TariffEditor({ title, value, onChange }: { title: string; value: Tariff; onChange: (t: Tariff) => void }) {
   const setAdj = (key: keyof Tariff["adjustments"], v: string) => onChange({ ...value, adjustments: { ...value.adjustments, [key]: Number(v) } });
   const setSlab = (i: number, field: "rate" | "fixed", v: string) => onChange({ ...value, slabs: value.slabs.map((s, idx) => idx === i ? { ...s, [field]: Number(v) } : s) });
