@@ -6,12 +6,18 @@ import { money, units } from "@/lib/engine/time";
 import { useMonitor } from "@/store/monitor";
 import type { HistoryRow, MeterId } from "@/lib/engine/types";
 
+function historyMonthTime(month: string): number {
+  const parsed = new Date(`${month} 1`);
+  if (!Number.isNaN(parsed.getTime())) return parsed.getTime();
+  const match = month.match(/([A-Za-z]{3,})\s*(\d{2,4})/);
+  if (!match) return 0;
+  const year = match[2].length === 2 ? 2000 + Number(match[2]) : Number(match[2]);
+  const fallback = new Date(`${match[1]} 1, ${year}`);
+  return Number.isNaN(fallback.getTime()) ? 0 : fallback.getTime();
+}
+
 function HistoryTable({ title, rows }: { title: string; rows: HistoryRow[] }) {
-  const sorted = [...rows].sort((a, b) => {
-    const ay = Number(`20${a.month.slice(-2)}`);
-    const by = Number(`20${b.month.slice(-2)}`);
-    return by - ay || b.month.localeCompare(a.month);
-  });
+  const sorted = [...rows].sort((a, b) => historyMonthTime(b.month) - historyMonthTime(a.month));
   return (
     <div className="min-w-0">
       <div className="mb-3 flex items-center justify-between">
