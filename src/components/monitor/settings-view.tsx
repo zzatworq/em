@@ -116,10 +116,8 @@ export function SettingsView() {
           <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Field label="Goal combined units" type="number" value={g.goalCombinedUnits} onChange={(v) => setG({ ...g, goalCombinedUnits: Number(v) })} />
             <Field label="Billing day" type="number" value={g.billingDay} onChange={(v) => setG({ ...g, billingDay: Number(v) })} />
-            <Field label="Billing hour" type="number" value={g.billingHour} onChange={(v) => setG({ ...g, billingHour: Number(v) })} />
-            <Field label="Billing minute" type="number" value={g.billingMinute} onChange={(v) => setG({ ...g, billingMinute: Number(v) })} />
-            <Field label="Solar start hour" type="number" value={g.solarStartHour} onChange={(v) => setG({ ...g, solarStartHour: Number(v) })} />
-            <Field label="Solar end hour" type="number" value={g.solarEndHour} onChange={(v) => setG({ ...g, solarEndHour: Number(v) })} />
+            <TimeField label="Billing time" hour={g.billingHour} minute={g.billingMinute} onChange={(hour, minute) => setG({ ...g, billingHour: hour, billingMinute: minute })} />
+            <RangeField label="Solar window (hours)" from={g.solarStartHour} to={g.solarEndHour} onFromChange={(v) => setG({ ...g, solarStartHour: v })} onToChange={(v) => setG({ ...g, solarEndHour: v })} />
           </div>
           <Button className="mt-5" onClick={() => { saveGeneral(g); setStatus("General settings saved."); }}>Save general</Button>
         </div>}
