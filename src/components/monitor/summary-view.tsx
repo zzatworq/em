@@ -87,9 +87,12 @@ export function SummaryView() {
   const d = dashboard;
   const hourly = hourlyOverride ?? d.hourly;
   const pace = d.goalPace;
-  const displayedUsage = d.isCurrentBillingMonth ? d.projectedTotal : d.totalConsumptionCombined;
-  const displayedBill = d.projectedBillActualTotal;
-  const effectiveRate = displayedUsage > 0 ? displayedBill / displayedUsage : 0;
+  // Total usage is the amount actually consumed so far. The projected month
+  // estimate is shown separately and is used for the projected bill.
+  const displayedUsage = d.totalConsumptionCombined;
+  const projectedUsage = d.isCurrentBillingMonth ? d.projectedTotal : d.totalConsumptionCombined;
+  const displayedBill = d.isCurrentBillingMonth ? d.projectedBillActualTotal : d.currentBillNew + d.currentBillOld;
+  const effectiveRate = projectedUsage > 0 ? displayedBill / projectedUsage : 0;
 
   return (
     <div className="space-y-5">
@@ -116,16 +119,18 @@ export function SummaryView() {
 
       <div className="grid gap-5 lg:grid-cols-3">
         <section className="rounded-2xl bg-elevated p-5 shadow-border lg:col-span-2 sm:p-6">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted">Total usage</p>
-          <div className="mt-1 flex flex-wrap items-end justify-between gap-4">
-            <p className="font-display text-5xl font-medium tracking-tight tabular-nums sm:text-6xl">
-              {units(displayedUsage)}
-              <span className="ml-2 text-lg font-normal text-subtle">kWh</span>
-            </p>
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wider text-muted">Total usage</p>
+              <p className="mt-1 font-display text-5xl font-medium tracking-tight tabular-nums sm:text-6xl">
+                {units(displayedUsage)}
+                <span className="ml-2 text-lg font-normal text-subtle">kWh</span>
+              </p>
+            </div>
             <div className="text-right">
-              <p className="text-xs text-muted">{d.isCurrentBillingMonth ? "Projected bill" : "Calculated bill"}</p>
-              <p className="font-display text-2xl tabular-nums">{money(displayedBill)}</p>
-              <p className="mt-0.5 font-mono text-xs text-subtle tabular-nums">{units(displayedUsage)} × {effectiveRate.toFixed(2)}</p>
+              <p className="text-xs text-muted">{d.isCurrentBillingMonth ? "Estimated month" : "Calculated bill"}</p>
+              {d.isCurrentBillingMonth ? <p className="font-display text-2xl tabular-nums">{units(projectedUsage)} <span className="text-base font-normal text-subtle">kWh</span></p> : <p className="font-display text-2xl tabular-nums">{money(displayedBill)}</p>}
+              {d.isCurrentBillingMonth ? <p className="mt-0.5 font-mono text-xs text-subtle tabular-nums">{money(displayedBill)} · {units(projectedUsage)} × {effectiveRate.toFixed(2)}</p> : null}
             </div>
           </div>
           <p className="mt-2 font-mono text-xs text-subtle tabular-nums">
@@ -168,30 +173,8 @@ export function SummaryView() {
           </div>
         </section>
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-1">
-          <MeterCard
-            title="Meter 1"
-            tone="meter1"
-            total={d.totalConsumptionNew}
-            billing={d.billingNew}
-            carry={d.carryForwardNew}
-            average={d.averageNew === "" ? "" : Number(d.averageNew)}
-            activeDays={d.activeDaysNew}
-            bill={d.currentBillNew}
-            current={d.currentNew}
-            initial={d.initialNew}
-          />
-          <MeterCard
-            title="Meter 2"
-            tone="meter2"
-            total={d.totalConsumptionOld}
-            billing={d.billingOld}
-            carry={d.carryForwardOld}
-            average={d.averageOld === "" ? "" : Number(d.averageOld)}
-            activeDays={d.activeDaysOld}
-            bill={d.currentBillOld}
-            current={d.currentOld}
-            initial={d.initialOld}
-          />
+          <MeterCard title="Meter 1" tone="meter1" total={d.totalConsumptionNew} billing={d.billingNew} carry={d.carryForwardNew} average={d.averageNew === "" ? "" : Number(d.averageNew)} activeDays={d.activeDaysNew} bill={d.currentBillNew} current={d.currentNew} initial={d.initialNew} />
+          <MeterCard title="Meter 2" tone="meter2" total={d.totalConsumptionOld} billing={d.billingOld} carry={d.carryForwardOld} average={d.averageOld === "" ? "" : Number(d.averageOld)} activeDays={d.activeDaysOld} bill={d.currentBillOld} current={d.currentOld} initial={d.initialOld} />
         </div>
       </div>
 
@@ -203,28 +186,14 @@ export function SummaryView() {
             <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-meter2" /> Meter 2</span>
           </div>
         </div>
-        <UsageChart
-          points={d.daily}
-          onBarClick={(i) => {
-            const point = d.daily[i] as DailyPoint | undefined;
-            if (point) setHourlyDay(point.date);
-          }}
-        />
+        <UsageChart points={d.daily} onBarClick={(i) => { const point = d.daily[i] as DailyPoint | undefined; if (point) setHourlyDay(point.date); }} />
       </section>
 
       <section className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h3 className="font-display text-lg font-medium">Hourly consumption</h3>
-          <select
-            value={hourlyDay}
-            onChange={(e) => setHourlyDay(e.target.value)}
-            className="h-11 rounded-md border border-border bg-surface px-3 text-sm"
-          >
-            {d.hourlyDays.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
+          <select value={hourlyDay} onChange={(e) => setHourlyDay(e.target.value)} className="h-11 rounded-md border border-border bg-surface px-3 text-sm">
+            {d.hourlyDays.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
           </select>
         </div>
         <UsageChart points={hourly} />
