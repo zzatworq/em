@@ -87,6 +87,9 @@ export function SummaryView() {
   const d = dashboard;
   const hourly = hourlyOverride ?? d.hourly;
   const pace = d.goalPace;
+  const displayedUsage = d.isCurrentBillingMonth ? d.projectedTotal : d.totalConsumptionCombined;
+  const displayedBill = d.projectedBillActualTotal;
+  const effectiveRate = displayedUsage > 0 ? displayedBill / displayedUsage : 0;
 
   return (
     <div className="space-y-5">
@@ -116,12 +119,13 @@ export function SummaryView() {
           <p className="text-xs font-medium uppercase tracking-wider text-muted">Total usage</p>
           <div className="mt-1 flex flex-wrap items-end justify-between gap-4">
             <p className="font-display text-5xl font-medium tracking-tight tabular-nums sm:text-6xl">
-              {units(d.isCurrentBillingMonth ? d.projectedTotal : d.totalConsumptionCombined)}
+              {units(displayedUsage)}
               <span className="ml-2 text-lg font-normal text-subtle">kWh</span>
             </p>
             <div className="text-right">
               <p className="text-xs text-muted">{d.isCurrentBillingMonth ? "Projected bill" : "Calculated bill"}</p>
-              <p className="font-display text-2xl tabular-nums">{money(d.projectedBillActualTotal)}</p>
+              <p className="font-display text-2xl tabular-nums">{money(displayedBill)}</p>
+              <p className="mt-0.5 font-mono text-xs text-subtle tabular-nums">{units(displayedUsage)} × {effectiveRate.toFixed(2)}</p>
             </div>
           </div>
           <p className="mt-2 font-mono text-xs text-subtle tabular-nums">
@@ -157,7 +161,7 @@ export function SummaryView() {
               <span>Meter 1 · {units(d.billingNew)} kWh</span>
               <span>Meter 2 · {units(d.billingOld)} kWh</span>
             </div>
-            <div className="flex h-2 overflow-hidden rounded-full">
+            <div className="flex h-2 overflow-hidden rounded-full bg-black/25">
               <div className="bg-meter1" style={{ width: `${d.meter1Share}%` }} />
               <div className="bg-meter2" style={{ width: `${d.meter2Share}%` }} />
             </div>
