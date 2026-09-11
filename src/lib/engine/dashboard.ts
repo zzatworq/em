@@ -179,6 +179,26 @@ function projectMonth(daily: DailyPoint[], billingStart: Date, billingEnd: Date,
   return { newMeter: projectedNew, oldMeter: projectedOld, total: projectedNew + projectedOld };
 }
 
+function activeDaysForMeter(readings: CarriedReading[], billingStart: Date, periodNow: Date, meter: "new" | "old"): number {
+  const start = billingStart.getTime();
+  const end = periodNow.getTime();
+  if (end <= start) return 0;
+  const key = meter === "new" ? "newReading" : "oldReading";
+  const anchors = [billingStart, ...readings
+    .filter((r) => r.datetime > start && r.datetime < end)
+    .map((r) => new Date(r.datetime)), periodNow]
+    .sort((a, b) => a.getTime() - b.getTime());
+  let activeMs = 0;
+  for (let i = 0; i < anchors.length - 1; i++) {
+    const a = anchors[i];
+    const b = anchors[i + 1];
+    const ra = readingsAtOrBefore(readings, a)[key];
+    const rb = readingsAtOrBefore(readings, b)[key];
+    if (ra != null && rb != null && Number(rb) - Number(ra) > 0.0001) activeMs += b.getTime() - a.getTime();
+  }
+  return activeMs / 86400000;
+}
+
 function collectionDateTime(c: Collection): Date | null {
   const dt = new Date(`${c.date}T${c.time || "00:00"}:00`);
   return Number.isNaN(dt.getTime()) ? null : dt;
@@ -253,14 +273,13 @@ export function computeDashboard(opts: {
   const totalConsumptionNew = (billingNew === "" ? 0 : Number(billingNew)) + carryForwardNew;
   const totalConsumptionOld = (billingOld === "" ? 0 : Number(billingOld)) + carryForwardOld;
   const totalConsumptionCombined = totalConsumptionNew + totalConsumptionOld;
-  const currentBill1 = calculateMeterBill(billingNew === "" ? 0 : Number(billingNew), tariff1);
-  const currentBill2 = calculateMeterBill(billingOld === "" ? 0 : Number(billingOld), tariff2);
-  const projectedBill1 = calculateMeterBill(projection.newMeter, tariff1);
-  const projectedBill2 = calculateMeterBill(projection.oldMeter, tariff2);
-  const assumedUnits = isCurrent ? projection.total : Number(billingTotal || 0);
-  const half = assumedUnits / 2;
-  const split1 = calculateMeterBill(half, tariff1);
-  const split2 = calculateMeterBill(half, tariff2);
+  const currentBill1 = calculateMeterBill(totalConsumptionNew, tariff1);
+  const currentBill2 = calculateMeterBill(totalConsumptionOld, tariff2);
+  const projectedConsumptionNew = projection.newMeter + carryForwardNew;
+  const projectedConsumptionOld = projection.oldMeter + carryForwardOld;
+  const projectedConsumptionCombined = projectedConsumptionNew + projectedConsumptionOld;
+  const projectedBill1 = calculateMeterBill(projectedConsumptionNew, tariff1);
+  const projectedBill2 = calculateMeterBill(projectedConsumptionOld, tariff2);
   const periodStd = billingPeriodLengthDays(billingStart);
   const pro1 = calculateProRata(startR.newReading, latest?.newReading ?? null, elapsedDays, periodStd);
   const pro2 = calculateProRata(startR.oldReading, latest?.oldReading ?? null, elapsedDays, periodStd);
@@ -269,7 +288,9 @@ export function computeDashboard(opts: {
   const hourly = getHourlyChartData(readings, hourlyStart, hourlyEnd);
   const hourlyDays = daily.filter((d) => d.total !== "").map((d) => ({ value: d.date, label: new Date(d.date + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) }));
   if (isCurrent) hourlyDays.unshift({ value: "last24", label: "Last 24 hours" });
-  const shareBase = billingTotal === "" || billingTotal <= 0 ? 0 : Number(billingTotal);
+  const shareBase = totalConsumptionCombined > 0 ? totalConsumptionCombined : 0;
+  const activeDaysNew = activeDaysForMeter(readings, billingStart, periodNow, "new");
+  const activeDaysOld = activeDaysForMeter(readings, billingStart, periodNow, "old");
 
   return {
     empty: false as const,
@@ -283,14 +304,16 @@ export function computeDashboard(opts: {
     billingOld,
     billingTotal,
     elapsedDays,
-    averageNew: billingNew !== "" && elapsedDays > 0 ? Number(billingNew) / elapsedDays : "",
-    averageOld: billingOld !== "" && elapsedDays > 0 ? Number(billingOld) / elapsedDays : "",
+    averageNew: billingNew !== "" && activeDaysNew > 0 ? Number(billingNew) / activeDaysNew : "",
+    averageOld: billingOld !== "" && activeDaysOld > 0 ? Number(billingOld) / activeDaysOld : "",
+    activeDaysNew,
+    activeDaysOld,
     last24Total: last24h.total,
     last24New: last24h.newMeter,
     last24Old: last24h.oldMeter,
-    projectedNew: projection.newMeter,
-    projectedOld: projection.oldMeter,
-    projectedTotal: projection.total,
+    projectedNew: projectedConsumptionNew,
+    projectedOld: projectedConsumptionOld,
+    projectedTotal: projectedConsumptionCombined,
     meter1Share: shareBase ? (Number(billingNew || 0) / shareBase) * 100 : 0,
     meter2Share: shareBase ? (Number(billingOld || 0) / shareBase) * 100 : 0,
     carryForwardNew,
@@ -301,9 +324,9 @@ export function computeDashboard(opts: {
     currentBillNew: currentBill1.total,
     currentBillOld: currentBill2.total,
     currentBillDetails: { meter1: currentBill1, meter2: currentBill2 },
-    projectedBillDetails: { meter1: split1, meter2: split2 },
+    projectedBillDetails: { meter1: projectedBill1, meter2: projectedBill2 },
     projectedBillActualDetails: { meter1: projectedBill1, meter2: projectedBill2 },
-    projectedBill5050Total: split1.total + split2.total,
+    projectedBill5050Total: projectedBill1.total + projectedBill2.total,
     projectedBillActualTotal: projectedBill1.total + projectedBill2.total,
     proRata: { meter1: pro1, meter2: pro2, standardDays: periodStd },
     billingStart: formatDateTime(billingStart),
