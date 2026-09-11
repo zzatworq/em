@@ -69,18 +69,23 @@ export function SettingsView() {
   return (
     <div className="space-y-5">
       <section className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
-        <div className="border-b border-border">
-          <div className="flex gap-1 overflow-x-auto" role="tablist" aria-label="Settings sections">
-            {tabs.map(([id, label]) => (
-              <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
-                className={`shrink-0 border-b-2 px-4 py-3 text-sm font-medium transition-colors ${tab === id ? "border-foreground text-foreground" : "border-transparent text-muted hover:text-foreground"}`}>
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <div className="flex flex-col gap-6 lg:flex-row lg:gap-8">
+          <aside className="shrink-0 lg:w-52">
+            <div className="rounded-xl border border-border bg-background/40 p-2 lg:sticky lg:top-24" role="tablist" aria-label="Settings sections">
+              <p className="px-3 pb-2 pt-1 text-xs font-medium uppercase tracking-wider text-muted">Settings</p>
+              <div className="flex gap-1 overflow-x-auto lg:flex-col lg:overflow-visible">
+                {tabs.map(([id, label]) => (
+                  <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
+                    className={`flex shrink-0 items-center rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors lg:w-full ${tab === id ? "bg-foreground text-background" : "text-muted hover:bg-elevated hover:text-foreground"}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </aside>
 
-        {tab === "data" && <div className="pt-5">
+          <div className="min-w-0 flex-1">
+        {tab === "data" && <div>
           <h2 className="font-display text-2xl font-medium">Data & backup</h2>
           <p className="mt-1 text-sm text-muted">All monitor data is stored server-side. CSV imports add readings without replacing the rest of the application data.</p>
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -132,6 +137,8 @@ export function SettingsView() {
         </div>}
 
         {status ? <p className="mt-5 rounded-lg bg-background px-3 py-2 text-sm" role="status">{status}</p> : null}
+          </div>
+        </div>
       </section>
     </div>
   );
