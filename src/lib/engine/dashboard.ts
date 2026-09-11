@@ -291,11 +291,18 @@ export function computeDashboard(opts: {
   const projectedConsumptionNew = projection.newMeter + carryForwardNew;
   const projectedConsumptionOld = projection.oldMeter + carryForwardOld;
   const projectedConsumptionCombined = projectedConsumptionNew + projectedConsumptionOld;
-  // Keep both projection models available: the optional 50/50 model and the
-  // actual per-meter projection. The Bill page chooses between them.
-  const projectedHalf = projectedConsumptionCombined / 2;
-  const split1 = calculateMeterBill(projectedHalf, tariff1);
-  const split2 = calculateMeterBill(projectedHalf, tariff2);
+  // "Assume 50/50" should only guess at the *remaining* (not-yet-consumed)
+  // portion of the month, since that's the only part we don't know the
+  // real per-meter split for. Units already consumed are already known
+  // per meter from actual readings and must stay attributed to their real
+  // meter — splitting the whole projected total in half discarded that
+  // known data and just guessed at the entire month.
+  const actualNewSoFar = billingNew === "" ? 0 : Number(billingNew);
+  const actualOldSoFar = billingOld === "" ? 0 : Number(billingOld);
+  const remainingTotal = isCurrent ? Math.max(0, projection.total - (actualNewSoFar + actualOldSoFar)) : 0;
+  const halfRemaining = remainingTotal / 2;
+  const split1 = calculateMeterBill(actualNewSoFar + halfRemaining, tariff1);
+  const split2 = calculateMeterBill(actualOldSoFar + halfRemaining, tariff2);
   const projectedActual1 = calculateMeterBill(projectedConsumptionNew, tariff1);
   const projectedActual2 = calculateMeterBill(projectedConsumptionOld, tariff2);
   const periodStd = billingPeriodLengthDays(billingStart);
