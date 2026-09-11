@@ -278,8 +278,11 @@ export function computeDashboard(opts: {
   const projectedConsumptionNew = projection.newMeter + carryForwardNew;
   const projectedConsumptionOld = projection.oldMeter + carryForwardOld;
   const projectedConsumptionCombined = projectedConsumptionNew + projectedConsumptionOld;
-  const projectedBill1 = calculateMeterBill(projectedConsumptionNew, tariff1);
-  const projectedBill2 = calculateMeterBill(projectedConsumptionOld, tariff2);
+  // Project consumption first. The projected bill is intentionally calculated with a
+  // 50/50 split of the combined projection, matching the app's existing billing model.
+  const projectedHalf = projectedConsumptionCombined / 2;
+  const split1 = calculateMeterBill(projectedHalf, tariff1);
+  const split2 = calculateMeterBill(projectedHalf, tariff2);
   const periodStd = billingPeriodLengthDays(billingStart);
   const pro1 = calculateProRata(startR.newReading, latest?.newReading ?? null, elapsedDays, periodStd);
   const pro2 = calculateProRata(startR.oldReading, latest?.oldReading ?? null, elapsedDays, periodStd);
@@ -324,10 +327,10 @@ export function computeDashboard(opts: {
     currentBillNew: currentBill1.total,
     currentBillOld: currentBill2.total,
     currentBillDetails: { meter1: currentBill1, meter2: currentBill2 },
-    projectedBillDetails: { meter1: projectedBill1, meter2: projectedBill2 },
-    projectedBillActualDetails: { meter1: projectedBill1, meter2: projectedBill2 },
-    projectedBill5050Total: projectedBill1.total + projectedBill2.total,
-    projectedBillActualTotal: projectedBill1.total + projectedBill2.total,
+    projectedBillDetails: { meter1: split1, meter2: split2 },
+    projectedBillActualDetails: { meter1: split1, meter2: split2 },
+    projectedBill5050Total: split1.total + split2.total,
+    projectedBillActualTotal: split1.total + split2.total,
     proRata: { meter1: pro1, meter2: pro2, standardDays: periodStd },
     billingStart: formatDateTime(billingStart),
     billingEnd: formatDateTime(billingEnd),
@@ -341,7 +344,7 @@ export function computeDashboard(opts: {
     isCurrentBillingMonth: isCurrent,
     availableMonthKey: ymd(billingStart),
     effectiveCurrentRate: (isCurrent ? projectedConsumptionCombined : totalConsumptionCombined) > 0
-      ? (isCurrent ? projectedBill1.total + projectedBill2.total : currentBill1.total + currentBill2.total) / (isCurrent ? projectedConsumptionCombined : totalConsumptionCombined)
+      ? (isCurrent ? split1.total + split2.total : currentBill1.total + currentBill2.total) / (isCurrent ? projectedConsumptionCombined : totalConsumptionCombined)
       : 0,
     carried: readings,
     billingStartDate: billingStart,
