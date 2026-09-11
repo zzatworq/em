@@ -3,11 +3,13 @@ import { useDashboard, useMonitor } from "@/store/monitor";
 import { money, units } from "@/lib/engine/time";
 import type { DailyPoint } from "@/lib/engine/types";
 
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Stat({ label, value, unit, hint }: { label: string; value: string; unit?: string; hint?: string }) {
   return (
     <div>
       <p className="text-xs font-medium uppercase tracking-wider text-muted">{label}</p>
-      <p className="mt-1 font-display text-xl font-medium tabular-nums text-foreground">{value}</p>
+      <p className="mt-1 font-display text-xl font-medium tabular-nums text-foreground">
+        {value}{unit ? <span className="ml-1 text-sm font-normal text-subtle">{unit}</span> : null}
+      </p>
       {hint ? <p className="mt-0.5 text-xs text-subtle">{hint}</p> : null}
     </div>
   );
@@ -49,7 +51,7 @@ function MeterCard({
       <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-4 text-sm">
         <div>
           <dt className="text-xs text-muted">Average</dt>
-          <dd className="tabular-nums">{units(average)} kWh/d</dd><p className="mt-0.5 text-[11px] text-subtle">{units(activeDays, 1)} active days</p>
+          <dd className="tabular-nums">{units(average)} <span className="text-xs font-normal text-subtle">kWh/d</span></dd><p className="mt-0.5 text-[11px] text-subtle">{units(activeDays, 1)} active days</p>
         </div>
         <div>
           <dt className="text-xs text-muted">Bill so far</dt>
@@ -113,8 +115,8 @@ export function SummaryView() {
         <section className="rounded-2xl bg-elevated p-5 shadow-border lg:col-span-2 sm:p-6">
           <p className="text-xs font-medium uppercase tracking-wider text-muted">Total usage</p>
           <div className="mt-1 flex flex-wrap items-end justify-between gap-4">
-            <p className="font-display text-4xl font-medium tracking-tight tabular-nums text-foreground/80 sm:text-5xl">
-              {units(d.totalConsumptionCombined)}
+            <p className="font-display text-5xl font-medium tracking-tight tabular-nums sm:text-6xl">
+              {units(d.isCurrentBillingMonth ? d.projectedTotal : d.totalConsumptionCombined)}
               <span className="ml-2 text-lg font-normal text-subtle">kWh</span>
             </p>
             <div className="text-right">
@@ -126,11 +128,12 @@ export function SummaryView() {
             {units(d.billingTotal)} + {units((d.carryForwardNew || 0) + (d.carryForwardOld || 0))}
           </p>
           <div className="mt-6 grid grid-cols-2 gap-4 border-t border-border pt-5 sm:grid-cols-4">
-            <Stat label="Last 24 h" value={`${units(d.last24Total)} kWh`} />
-            <Stat label="Daily avg" value={`${units(pace.dailyAverage)} kWh/d`} />
+            <Stat label="Last 24 h" value={units(d.last24Total)} unit="kWh" />
+            <Stat label="Daily avg" value={units(pace.dailyAverage)} unit="kWh/d" />
             <Stat
               label="To goal"
-              value={pace.remainingUnits > 0 ? `${units(pace.remainingUnits)} kWh` : "Exceeded"}
+              value={pace.remainingUnits > 0 ? units(pace.remainingUnits) : "Exceeded"}
+              unit={pace.remainingUnits > 0 ? "kWh" : undefined}
             />
             <Stat
               label="Required daily"
@@ -139,8 +142,9 @@ export function SummaryView() {
                   ? pace.overGoal
                     ? "Over"
                     : "—"
-                  : `${units(pace.requiredDailyAverage)} kWh/d`
+                  : units(pace.requiredDailyAverage)
               }
+              unit={pace.requiredDailyAverage === "" ? undefined : "kWh/d"}
             />
           </div>
           <p className="mt-4 text-pretty text-sm text-muted">
