@@ -340,8 +340,8 @@ export function computeDashboard(opts: {
     hourlyDays,
     isCurrentBillingMonth: isCurrent,
     availableMonthKey: ymd(billingStart),
-    effectiveCurrentRate: (isCurrent ? projection.total : Number(billingTotal || 0)) > 0
-      ? (isCurrent ? split1.total + split2.total : currentBill1.total + currentBill2.total) / (isCurrent ? projection.total : Number(billingTotal || 0))
+    effectiveCurrentRate: (isCurrent ? projectedConsumptionCombined : totalConsumptionCombined) > 0
+      ? (isCurrent ? projectedBill1.total + projectedBill2.total : currentBill1.total + currentBill2.total) / (isCurrent ? projectedConsumptionCombined : totalConsumptionCombined)
       : 0,
     carried: readings,
     billingStartDate: billingStart,
