@@ -105,6 +105,22 @@
   [role="button"]:not(:disabled) {
     cursor: pointer;
   }
+
+  /* Tables should shrink with their container instead of inheriting rigid
+     minimum widths from individual views. Long dates/text may wrap; numeric
+     values and actions remain compact. */
+  table {
+    width: 100%;
+    min-width: 0;
+    table-layout: auto;
+  }
+  table.min-w-\[28rem\],
+  table.min-w-\[40rem\] {
+    min-width: 0 !important;
+  }
+  th, td {
+    min-width: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
