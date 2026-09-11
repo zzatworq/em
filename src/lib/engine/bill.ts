@@ -35,7 +35,11 @@ export function calculateMeterBill(rawUnits: number, tariff: Tariff): MeterBill 
 
   const activeSlabs =
     tariff.consumerType === "Protected" ? tariff.protectedSlabs : tariff.slabs;
-  let slab = activeSlabs[activeSlabs.length - 1];
+  // Default to the cheapest slab, not the most expensive one. Consumption
+  // below the first slab's `min` (e.g. 0.5 units when the first slab starts
+  // at 1) would otherwise fall through the loop below and silently bill at
+  // the top rate instead of the bottom one.
+  let slab = activeSlabs[0];
   for (const s of activeSlabs) {
     if (units >= s.min && units <= s.max) {
       slab = s;
