@@ -31,7 +31,7 @@ function HistoryTable({ title, rows }: { title: string; rows: HistoryRow[] }) {
               <th className="w-12 pb-2 text-center font-medium">Status</th>
               <th className="pb-2 text-right font-medium">Units</th>
               <th className="pb-2 text-right font-medium">Bill</th>
-              <th className="pb-2 text-right font-medium">Paid</th>
+              <th className="pb-2 text-right font-medium">Unit cost</th>
             </tr>
           </thead>
           <tbody>
@@ -41,7 +41,7 @@ function HistoryTable({ title, rows }: { title: string; rows: HistoryRow[] }) {
                 <td className="w-12 py-2.5 text-center text-xs font-medium text-muted">{r.status}</td>
                 <td className="py-2.5 text-right tabular-nums">{units(r.units, 0)}</td>
                 <td className="py-2.5 text-right tabular-nums">{money(r.bill)}</td>
-                <td className="py-2.5 text-right tabular-nums">{money(r.payment)}</td>
+                <td className="py-2.5 text-right tabular-nums">{r.units > 0 ? money(r.bill / r.units) : "—"}</td>
               </tr>
             ))}
           </tbody>
@@ -83,6 +83,7 @@ export function HistoryView() {
   const [status, setStatus] = useState("EX");
   const [bill, setBill] = useState("");
   const [payment, setPayment] = useState("");
+  const [collectionOpen, setCollectionOpen] = useState(false);
 
   const calculated = useMemo(() => {
     const current = localDateTime(date, time);
@@ -106,10 +107,21 @@ export function HistoryView() {
   return (
     <div className="space-y-5">
       <section className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
-        <div>
-          <h2 className="font-display text-2xl font-medium">Collection audit</h2>
-          <p className="mt-1 text-sm text-muted">Enter only the official collection information. Billing month, previous baseline, day counts and billed units are calculated automatically.</p>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 className="font-display text-2xl font-medium">Collection audit</h2>
+            <p className="mt-1 text-sm text-muted">Record official meter collections and automatically update billing history.</p>
+          </div>
+          <Button onClick={() => setCollectionOpen(true)}>Add collection</Button>
         </div>
+      </section>
+
+      {collectionOpen ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
+        <div>
+          <div className="flex items-start justify-between gap-4"><div><h2 className="font-display text-2xl font-medium">Collection audit</h2>
+          <p className="mt-1 text-sm text-muted">Enter only the official collection information. Billing month, previous baseline, day counts and billed units are calculated automatically.</p>
+          </div><Button variant="ghost" size="sm" onClick={() => setCollectionOpen(false)}>Close</Button></div>
         <form
           className="mt-6 space-y-5"
           onSubmit={(e) => {
@@ -162,7 +174,8 @@ export function HistoryView() {
             )}
           </div>
         </form>
-      </section>
+      </div>
+      </div> : null}
 
       <section className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
         <div>
