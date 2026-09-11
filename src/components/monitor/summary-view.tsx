@@ -20,6 +20,7 @@ function MeterCard({
   billing,
   carry,
   average,
+  activeDays,
   bill,
   current,
   initial,
@@ -30,6 +31,7 @@ function MeterCard({
   billing: number | "";
   carry: number;
   average: number | "";
+  activeDays: number;
   bill: number;
   current: number | null;
   initial: number | null;
@@ -47,7 +49,7 @@ function MeterCard({
       <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-4 text-sm">
         <div>
           <dt className="text-xs text-muted">Average</dt>
-          <dd className="tabular-nums">{units(average)} kWh/d</dd>
+          <dd className="tabular-nums">{units(average)} kWh/d</dd><p className="mt-0.5 text-[11px] text-subtle">{units(activeDays, 1)} active days</p>
         </div>
         <div>
           <dt className="text-xs text-muted">Bill so far</dt>
@@ -111,13 +113,13 @@ export function SummaryView() {
         <section className="rounded-2xl bg-elevated p-5 shadow-border lg:col-span-2 sm:p-6">
           <p className="text-xs font-medium uppercase tracking-wider text-muted">Total usage</p>
           <div className="mt-1 flex flex-wrap items-end justify-between gap-4">
-            <p className="font-display text-5xl font-medium tracking-tight tabular-nums">
+            <p className="font-display text-4xl font-medium tracking-tight tabular-nums text-foreground/80 sm:text-5xl">
               {units(d.totalConsumptionCombined)}
               <span className="ml-2 text-lg font-normal text-subtle">kWh</span>
             </p>
             <div className="text-right">
-              <p className="text-xs text-muted">{d.isCurrentBillingMonth ? "Projected bill (50/50)" : "Calculated bill"}</p>
-              <p className="font-display text-2xl tabular-nums">{money(d.projectedBill5050Total)}</p>
+              <p className="text-xs text-muted">{d.isCurrentBillingMonth ? "Projected bill" : "Calculated bill"}</p>
+              <p className="font-display text-2xl tabular-nums">{money(d.projectedBillActualTotal)}</p>
             </div>
           </div>
           <p className="mt-2 font-mono text-xs text-subtle tabular-nums">
@@ -165,6 +167,7 @@ export function SummaryView() {
             billing={d.billingNew}
             carry={d.carryForwardNew}
             average={d.averageNew === "" ? "" : Number(d.averageNew)}
+            activeDays={d.activeDaysNew}
             bill={d.currentBillNew}
             current={d.currentNew}
             initial={d.initialNew}
@@ -176,6 +179,7 @@ export function SummaryView() {
             billing={d.billingOld}
             carry={d.carryForwardOld}
             average={d.averageOld === "" ? "" : Number(d.averageOld)}
+            activeDays={d.activeDaysOld}
             bill={d.currentBillOld}
             current={d.currentOld}
             initial={d.initialOld}
