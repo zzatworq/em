@@ -22,7 +22,7 @@ export function SettingsView() {
   const markDirty = useMonitor((s) => s.markDirty);
   const resetDemo = useMonitor((s) => s.resetDemo);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [tab, setTab] = useState<"data" | "general" | "appearance" | "tariffs">("data");
+  const [tab, setTab] = useState<"data" | "general" | "appearance" | "tariffs">("general");
   const [g, setG] = useState<GeneralSettings>(general);
   const [a, setA] = useState<Tariff>(t1);
   const [b, setB] = useState<Tariff>(t2);
@@ -60,10 +60,10 @@ export function SettingsView() {
   }
 
   const tabs = [
-    ["data", "Data & backup"],
     ["general", "General"],
     ["appearance", "Appearance"],
     ["tariffs", "Tariffs"],
+    ["data", "Data & backup"],
   ] as const;
 
   return (
