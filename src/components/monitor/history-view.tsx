@@ -118,8 +118,7 @@ export function HistoryView() {
 
       {collectionOpen ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
-        <div>
-          <div className="flex items-start justify-between gap-4"><div><h2 className="font-display text-2xl font-medium">Collection audit</h2>
+        <div className="flex items-start justify-between gap-4"><div><h2 className="font-display text-2xl font-medium">Collection audit</h2>
           <p className="mt-1 text-sm text-muted">Enter only the official collection information. Billing month, previous baseline, day counts and billed units are calculated automatically.</p>
           </div><Button variant="ghost" size="sm" onClick={() => setCollectionOpen(false)}>Close</Button></div>
         <form
