@@ -1,4 +1,4 @@
-name: Retry settings layout migration
+name: Remove responsive table duplication
 on:
   push:
     branches: [main]
@@ -14,44 +14,52 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-      - name: Update settings
+      - name: Remove mobile table duplicates
         run: |
           python - <<'PY'
           from pathlib import Path
-          import re
-          p = Path('src/components/monitor/settings-view.tsx')
-          s = p.read_text()
 
-          s, n = re.subn(r'<Field label="Goal combined units" type="number" value=\{g\.goalCombinedUnits\} onChange=\{\(v\) => setG\(\{ \.\.\.g, goalCombinedUnits: Number\(v\) \}\)\} />', '<Field label="Goal ceiling (combined units)" type="number" value={g.goalCombinedUnits} onChange={(v) => setG({ ...g, goalCombinedUnits: Number(v) })} />', s, count=1)
-          if n != 1: raise SystemExit('goal field not found')
+          def remove_block(text, marker):
+              start = text.find(marker)
+              if start < 0:
+                  return text
+              tag_start = start
+              tag_end = text.find('>', tag_start)
+              if tag_end < 0:
+                  raise SystemExit(f'Opening tag not complete: {marker}')
+              depth = 0
+              i = tag_start
+              while i < len(text):
+                  open_i = text.find('<div', i)
+                  close_i = text.find('</div>', i)
+                  if close_i < 0:
+                      raise SystemExit(f'Could not find closing div for {marker}')
+                  if open_i >= 0 and open_i < close_i:
+                      end = text.find('>', open_i)
+                      if end < 0:
+                          raise SystemExit('Malformed div')
+                      depth += 1
+                      i = end + 1
+                  else:
+                      depth -= 1
+                      i = close_i + len('</div>')
+                      if depth == 0:
+                          return text[:start] + text[i:]
+              raise SystemExit(f'Could not match block: {marker}')
 
-          anchor = '<RangeField label="Solar window (hours)" from={g.solarStartHour} to={g.solarEndHour} onFromChange={(v) => setG({ ...g, solarStartHour: v })} onToChange={(v) => setG({ ...g, solarEndHour: v })} />'
-          if anchor not in s: raise SystemExit('solar field not found')
-          if 'label="V1 app URL"' not in s.split('{tab === "appearance"',1)[0]:
-              s = s.replace(anchor, anchor + '\n            <div className="sm:col-span-2 lg:col-span-3"><Field label="V1 app URL" value={g.v1Url} onChange={(v) => setG({ ...g, v1Url: v })} /></div>', 1)
-          s = s.replace('<p className="mt-1 text-sm text-muted">Monitoring target, billing boundary and solar window.</p>', '<p className="mt-1 text-sm text-muted">Goal ceiling, billing boundary, solar window and legacy app link.</p>', 1)
-
-          s = s.replace('<h2 className="font-display text-2xl font-medium">Appearance & links</h2>', '<h2 className="font-display text-2xl font-medium">Appearance</h2>', 1)
-          s = s.replace('<p className="mt-1 text-sm text-muted">Interface theme, meter colours and the V1 shortcut.</p>', '<p className="mt-1 text-sm text-muted">Interface theme and meter colours.</p>', 1)
-          s = re.sub(r'\n\s*<div className="sm:col-span-2 lg:col-span-3"><Field label="V1 app URL" value=\{g\.v1Url\} onChange=\{\(v\) => setG\(\{ \.\.\.g, v1Url: v \}\)\} /></div>', '', s, count=1)
-          s = s.replace('setStatus("Appearance and V1 link saved.")', 'setStatus("Appearance settings saved.")', 1)
-
-          s = re.sub(r'<h2 className="font-display text-2xl font-medium">Meter tariffs</h2>\s*<p className="mt-1 text-sm text-muted">MEPCO A-1 residential slabs\. Each meter remains independently configured\.</p>\s*<div className="mt-5 space-y-3"><TariffEditor title="Meter 1" value=\{a\} onChange=\{setA\} /><TariffEditor title="Meter 2" value=\{b\} onChange=\{setB\} /></div>\s*<div className="mt-5 flex flex-wrap gap-3"><Button onClick=\{\(\) => \{ saveTariffs\(a, b\); setStatus\("Tariffs saved\."\); \}\}>Save tariffs</Button><Button variant="outline" onClick=\{restoreDemo\}>Restore demo data</Button></div>', '<h2 className="font-display text-2xl font-medium">Tariff schedule</h2>\n          <p className="mt-1 text-sm text-muted">One MEPCO A-1 residential tariff schedule is applied to both meters. Meter usage is still tracked and billed independently.</p>\n          <div className="mt-5"><TariffEditor title="Shared tariff schedule" value={a} onChange={setA} /></div>\n          <div className="mt-5 flex flex-wrap gap-3"><Button onClick={() => { saveTariffs(a, a); setB(a); setStatus("Shared tariff schedule saved for both meters."); }}>Save tariff schedule</Button><Button variant="outline" onClick={restoreDemo}>Restore demo data</Button></div>', s, count=1)
-
-          s = s.replace('<p className="mt-2 text-xs text-muted">The goal ceiling is the maximum combined units you want to finish the billing period at or below.</p>', '<p className="mt-2 text-xs text-muted">The goal ceiling is the maximum combined units you want to finish the billing period at or below.</p>')
-          # Insert the explanation once after the General controls if it is not already present.
-          if 'The goal ceiling is the maximum combined units' not in s:
-              marker = '<Button className="mt-5" onClick={() => { saveGeneral(g); setStatus("General settings saved."); }}>Save general</Button>'
-              s = s.replace(marker, '<p className="mt-2 text-xs text-muted">The goal ceiling is the maximum combined units you want to finish the billing period at or below.</p>\n          ' + marker, 1)
-
-          p.write_text(s)
+          for name in ('history-view.tsx', 'readings-view.tsx'):
+              p = Path('src/components/monitor') / name
+              s = p.read_text()
+              s = remove_block(s, '<div className="grid gap-2 sm:hidden">')
+              s = s.replace('className="hidden overflow-x-auto sm:block"', 'className="overflow-x-auto"')
+              p.write_text(s)
           PY
-      - name: Commit and remove migration workflows
+      - name: Commit and clean up
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src/components/monitor/settings-view.tsx .github/workflows/fix-settings-layout.yml .github/workflows/apply-settings-layout.yml
-          git commit -m 'Reorganize settings and use shared tariff schedule'
+          git add src/components/monitor/history-view.tsx src/components/monitor/readings-view.tsx
+          git commit -m 'Remove responsive table duplication'
           git rm -f .github/workflows/fix-settings-layout.yml .github/workflows/apply-settings-layout.yml
-          git commit -m 'Remove temporary settings migration workflows'
+          git commit -m 'Remove temporary migration workflows'
           git push origin main
