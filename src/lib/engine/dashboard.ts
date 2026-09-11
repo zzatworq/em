@@ -183,18 +183,31 @@ function activeDaysForMeter(readings: CarriedReading[], billingStart: Date, peri
   const start = billingStart.getTime();
   const end = periodNow.getTime();
   if (end <= start) return 0;
+
+  // Active time is derived from consecutive observation intervals. A meter owns an
+  // interval only when its reading increased during that interval. This avoids
+  // dividing each meter by the entire billing period.
   const key = meter === "new" ? "newReading" : "oldReading";
-  const anchors = [billingStart, ...readings
-    .filter((r) => r.datetime > start && r.datetime < end)
-    .map((r) => new Date(r.datetime)), periodNow]
-    .sort((a, b) => a.getTime() - b.getTime());
+  const otherKey = meter === "new" ? "oldReading" : "newReading";
+  const points = [
+    { datetime: start, ...interpolatedReadingsAt(readings, billingStart) },
+    ...readings.filter((r) => r.datetime > start && r.datetime < end),
+    { datetime: end, ...interpolatedReadingsAt(readings, periodNow) },
+  ].sort((a, b) => a.datetime - b.datetime);
+
   let activeMs = 0;
-  for (let i = 0; i < anchors.length - 1; i++) {
-    const a = anchors[i];
-    const b = anchors[i + 1];
-    const ra = readingsAtOrBefore(readings, a)[key];
-    const rb = readingsAtOrBefore(readings, b)[key];
-    if (ra != null && rb != null && Number(rb) - Number(ra) > 0.0001) activeMs += b.getTime() - a.getTime();
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i], b = points[i + 1];
+    const duration = b.datetime - a.datetime;
+    if (duration <= 0) continue;
+    const delta = a[key] == null || b[key] == null ? 0 : Number(b[key]) - Number(a[key]);
+    const otherDelta = a[otherKey] == null || b[otherKey] == null ? 0 : Number(b[otherKey]) - Number(a[otherKey]);
+    if (delta > 0.0001 && otherDelta <= 0.0001) activeMs += duration;
+    else if (delta > 0.0001 && otherDelta > 0.0001) {
+      // A swap happened between sparse readings. There is no exact timestamp, so
+      // split that interval in proportion to the observed consumption changes.
+      activeMs += duration * delta / (delta + otherDelta);
+    }
   }
   return activeMs / 86400000;
 }
@@ -278,11 +291,13 @@ export function computeDashboard(opts: {
   const projectedConsumptionNew = projection.newMeter + carryForwardNew;
   const projectedConsumptionOld = projection.oldMeter + carryForwardOld;
   const projectedConsumptionCombined = projectedConsumptionNew + projectedConsumptionOld;
-  // Project consumption first. The projected bill is intentionally calculated with a
-  // 50/50 split of the combined projection, matching the app's existing billing model.
+  // Keep both projection models available: the optional 50/50 model and the
+  // actual per-meter projection. The Bill page chooses between them.
   const projectedHalf = projectedConsumptionCombined / 2;
   const split1 = calculateMeterBill(projectedHalf, tariff1);
   const split2 = calculateMeterBill(projectedHalf, tariff2);
+  const projectedActual1 = calculateMeterBill(projectedConsumptionNew, tariff1);
+  const projectedActual2 = calculateMeterBill(projectedConsumptionOld, tariff2);
   const periodStd = billingPeriodLengthDays(billingStart);
   const pro1 = calculateProRata(startR.newReading, latest?.newReading ?? null, elapsedDays, periodStd);
   const pro2 = calculateProRata(startR.oldReading, latest?.oldReading ?? null, elapsedDays, periodStd);
@@ -328,9 +343,9 @@ export function computeDashboard(opts: {
     currentBillOld: currentBill2.total,
     currentBillDetails: { meter1: currentBill1, meter2: currentBill2 },
     projectedBillDetails: { meter1: split1, meter2: split2 },
-    projectedBillActualDetails: { meter1: split1, meter2: split2 },
+    projectedBillActualDetails: { meter1: projectedActual1, meter2: projectedActual2 },
     projectedBill5050Total: split1.total + split2.total,
-    projectedBillActualTotal: split1.total + split2.total,
+    projectedBillActualTotal: projectedActual1.total + projectedActual2.total,
     proRata: { meter1: pro1, meter2: pro2, standardDays: periodStd },
     billingStart: formatDateTime(billingStart),
     billingEnd: formatDateTime(billingEnd),
@@ -344,7 +359,7 @@ export function computeDashboard(opts: {
     isCurrentBillingMonth: isCurrent,
     availableMonthKey: ymd(billingStart),
     effectiveCurrentRate: (isCurrent ? projectedConsumptionCombined : totalConsumptionCombined) > 0
-      ? (isCurrent ? split1.total + split2.total : currentBill1.total + currentBill2.total) / (isCurrent ? projectedConsumptionCombined : totalConsumptionCombined)
+      ? (isCurrent ? projectedActual1.total + projectedActual2.total : currentBill1.total + currentBill2.total) / (isCurrent ? projectedConsumptionCombined : totalConsumptionCombined)
       : 0,
     carried: readings,
     billingStartDate: billingStart,
