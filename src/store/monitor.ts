@@ -10,7 +10,7 @@ type State = MonitorData & { tab: TabId; selectedMonth: string | null; assume505
 function uid(prefix: string) { return `${prefix}-${crypto.randomUUID?.() ?? Math.random().toString(36).slice(2, 10)}`; }
 const empty = (): MonitorData => ({ readings: [], collections: [], history: [], notes: [], general: { ...DEFAULT_GENERAL }, tariff1: defaultTariff(), tariff2: defaultTariff() });
 export const useMonitor = create<State>()((set, get) => ({
-  ...empty(), tab: "summary", selectedMonth: null, assume5050: true, hourlyDay: "last24", hourlyOverride: null, hydrated: false, dirty: false,
+  ...empty(), tab: "summary", selectedMonth: null, assume5050: false, hourlyDay: "last24", hourlyOverride: null, hydrated: false, dirty: false,
   setTab: (tab) => set({ tab }), setMonth: (value) => set({ selectedMonth: value, hourlyOverride: null }), setAssume5050: (assume5050) => set({ assume5050 }),
   setHourlyDay: (hourlyDay) => { const s = get(); set({ hourlyDay, hourlyOverride: hourlyForDay(s.readings, hourlyDay, new Date(), s.general) }); },
   replaceData: (data) => set({ ...data, hydrated: true, dirty: false, selectedMonth: null, hourlyOverride: null }), markDirty: () => set({ dirty: true }), markSaved: () => set({ dirty: false }),
