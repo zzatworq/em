@@ -119,7 +119,7 @@ export function BillView() {
           <span className="font-display text-2xl tabular-nums">{money(total)}</span>
         </div>
         {assume5050 && dashboard.isCurrentBillingMonth ? (
-          <p className="mt-3 text-xs text-muted">Both meters billed as half of projected consumption.</p>
+          <p className="mt-3 text-xs text-muted">Units already used stay with their actual meter; only the remaining projected units for the rest of the month are split evenly.</p>
         ) : null}
         <p className="mt-3 text-xs text-subtle">
           Each meter is billed independently on the A-1 residential tariff. Combined is the sum of the two bills.
