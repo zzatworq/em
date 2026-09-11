@@ -7,13 +7,12 @@ import { useMonitor } from "@/store/monitor";
 import type { HistoryRow, MeterId } from "@/lib/engine/types";
 
 function historyMonthTime(month: string): number {
-  const parsed = new Date(`${month} 1`);
-  if (!Number.isNaN(parsed.getTime())) return parsed.getTime();
-  const match = month.match(/([A-Za-z]{3,})\s*(\d{2,4})/);
+  const match = month.trim().match(/^([A-Za-z]{3,9})\s+(\d{2}|\d{4})$/);
   if (!match) return 0;
+  const monthIndex = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"].indexOf(match[1].slice(0, 3).toLowerCase());
+  if (monthIndex < 0) return 0;
   const year = match[2].length === 2 ? 2000 + Number(match[2]) : Number(match[2]);
-  const fallback = new Date(`${match[1]} 1, ${year}`);
-  return Number.isNaN(fallback.getTime()) ? 0 : fallback.getTime();
+  return new Date(year, monthIndex, 1).getTime();
 }
 
 function HistoryTable({ title, rows }: { title: string; rows: HistoryRow[] }) {
