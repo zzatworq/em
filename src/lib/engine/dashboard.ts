@@ -184,9 +184,11 @@ function activeDaysForMeter(readings: CarriedReading[], billingStart: Date, peri
   const end = periodNow.getTime();
   if (end <= start) return 0;
 
-  // Active time is derived from consecutive observation intervals. A meter owns an
-  // interval only when its reading increased during that interval. This avoids
-  // dividing each meter by the entire billing period.
+  // Readings are already carry-forward normalized. A meter remains active through
+  // intervals where its register does not change (for example during solar hours
+  // or other zero-load periods); a flat interval must not silently erase active
+  // time. Track the last observed active meter and carry that state through
+  // zero/zero intervals.
   const key = meter === "new" ? "newReading" : "oldReading";
   const otherKey = meter === "new" ? "oldReading" : "newReading";
   const points = [
@@ -196,17 +198,35 @@ function activeDaysForMeter(readings: CarriedReading[], billingStart: Date, peri
   ].sort((a, b) => a.datetime - b.datetime);
 
   let activeMs = 0;
+  let lastActive: "new" | "old" | null = null;
+
   for (let i = 0; i < points.length - 1; i++) {
     const a = points[i], b = points[i + 1];
     const duration = b.datetime - a.datetime;
     if (duration <= 0) continue;
-    const delta = a[key] == null || b[key] == null ? 0 : Number(b[key]) - Number(a[key]);
-    const otherDelta = a[otherKey] == null || b[otherKey] == null ? 0 : Number(b[otherKey]) - Number(a[otherKey]);
-    if (delta > 0.0001 && otherDelta <= 0.0001) activeMs += duration;
-    else if (delta > 0.0001 && otherDelta > 0.0001) {
-      // A swap happened between sparse readings. There is no exact timestamp, so
-      // split that interval in proportion to the observed consumption changes.
-      activeMs += duration * delta / (delta + otherDelta);
+
+    const newDelta = a.newReading == null || b.newReading == null ? 0 : Number(b.newReading) - Number(a.newReading);
+    const oldDelta = a.oldReading == null || b.oldReading == null ? 0 : Number(b.oldReading) - Number(a.oldReading);
+    const newActive = newDelta > 0.0001;
+    const oldActive = oldDelta > 0.0001;
+
+    if (newActive && !oldActive) {
+      lastActive = "new";
+      if (meter === "new") activeMs += duration;
+    } else if (oldActive && !newActive) {
+      lastActive = "old";
+      if (meter === "old") activeMs += duration;
+    } else if (newActive && oldActive) {
+      // Sparse readings can straddle a swap. Keep the existing proportional
+      // fallback only for this genuinely ambiguous interval.
+      const share = meter === "new"
+        ? newDelta / (newDelta + oldDelta)
+        : oldDelta / (newDelta + oldDelta);
+      activeMs += duration * share;
+      lastActive = null;
+    } else if (lastActive === meter) {
+      // No register movement does not mean the meter was inactive.
+      activeMs += duration;
     }
   }
   return activeMs / 86400000;
