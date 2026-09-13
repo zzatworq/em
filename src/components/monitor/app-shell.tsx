@@ -59,7 +59,7 @@ export function AppShell() {
     return () => { if (saveTimer.current) window.clearTimeout(saveTimer.current); };
   }, [dirty, hydrated, markSaved]);
 
-  if (!hydrated) return <div className="flex min-h-dvh items-center justify-center bg-background text-muted"><div className="flex flex-col items-center gap-3"><Zap className="size-9 animate-spin" strokeWidth={1.75} aria-label="Loading" /><p className="text-sm">{error ? `Loading failed: ${error}` : "Loading shared meter data…"}</p></div></div>;
+  if (!hydrated) return <div className="flex min-h-dvh items-center justify-center bg-background text-muted"><div className="flex flex-col items-center gap-3"><Zap className="size-9 animate-loading-flip text-white" fill="white" strokeWidth={1.75} aria-label="Loading" /><p className="text-sm">{error ? `Loading failed: ${error}` : "Loading shared meter data…"}</p></div></div>;
 
   return (
     <div className="min-h-dvh bg-background text-foreground">
