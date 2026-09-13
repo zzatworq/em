@@ -59,7 +59,7 @@ export function AppShell() {
     return () => { if (saveTimer.current) window.clearTimeout(saveTimer.current); };
   }, [dirty, hydrated, markSaved]);
 
-  if (!hydrated) return <div className="flex min-h-dvh items-center justify-center bg-background text-muted"><p className="text-sm">{error ? `Loading failed: ${error}` : "Loading shared meter data…"}</p></div>;
+  if (!hydrated) return <div className="flex min-h-dvh items-center justify-center bg-background text-muted"><div className="flex flex-col items-center gap-3"><Zap className="size-9 animate-spin" strokeWidth={1.75} aria-label="Loading" /><p className="text-sm">{error ? `Loading failed: ${error}` : "Loading shared meter data…"}</p></div></div>;
 
   return (
     <div className="min-h-dvh bg-background text-foreground">
@@ -77,12 +77,7 @@ export function AppShell() {
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <nav className="flex gap-1 overflow-x-auto rounded-xl bg-elevated p-1.5 shadow-border">
             {PAGES.map((page) => (
-              <Link
-                key={page.to}
-                to={page.to}
-                activeOptions={{ exact: true }}
-                className={cn("inline-flex h-10 shrink-0 items-center rounded-lg px-3 text-sm font-medium transition-colors", "text-foreground hover:bg-background", "data-[status=active]:bg-foreground data-[status=active]:text-background")}
-              >
+              <Link key={page.to} to={page.to} activeOptions={{ exact: true }} className={cn("inline-flex h-10 shrink-0 items-center rounded-lg px-3 text-sm font-medium transition-colors", "text-foreground hover:bg-background", "data-[status=active]:bg-foreground data-[status=active]:text-background")}>
                 {page.label}
               </Link>
             ))}
