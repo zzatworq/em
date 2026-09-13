@@ -38,6 +38,16 @@
   --motion-slow: 400ms;
 }
 
+@keyframes loading-flip {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(360deg); }
+}
+
+.animate-loading-flip {
+  animation: loading-flip 1.1s linear infinite;
+  transform-style: preserve-3d;
+}
+
 :root[data-theme="light"] {
   --color-background: #f7f8f6;
   --color-surface: #ffffff;
@@ -106,9 +116,6 @@
     cursor: pointer;
   }
 
-  /* Tables should shrink with their container instead of inheriting rigid
-     minimum widths from individual views. Long dates/text may wrap; numeric
-     values and actions remain compact. */
   table {
     width: 100%;
     min-width: 0;
