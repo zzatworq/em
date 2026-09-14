@@ -29,7 +29,6 @@ import {
   ymd,
 } from "./time";
 
-const PRIOR_SHRINKAGE_DAYS = 3;
 type BillingClock = Pick<GeneralSettings, "billingHour" | "billingMinute">;
 
 function goalPace(currentUsage: number, billingStart: Date, billingEnd: Date, now: Date, goal: number): GoalPace {
@@ -112,71 +111,59 @@ export function getDailyChartData(readings: CarriedReading[], periodStart: Date,
   return output;
 }
 
-function blendedDailyRate(observedTotal: number, observedDays: number, priorPerDay: number | null) {
-  if (priorPerDay == null) return observedDays > 0 ? observedTotal / observedDays : 0;
-  return (observedTotal + priorPerDay * PRIOR_SHRINKAGE_DAYS) / (observedDays + PRIOR_SHRINKAGE_DAYS);
-}
-
-function priorPeriodDailyAverages(readings: CarriedReading[], billingStart: Date) {
-  if (!readings.length || readings[0].datetime >= billingStart.getTime()) return null;
-  const priorStart = new Date(billingStart.getFullYear(), billingStart.getMonth() - 1, billingStart.getDate(), billingStart.getHours(), billingStart.getMinutes(), 0, 0);
-  const days = (billingStart.getTime() - priorStart.getTime()) / 86400000;
-  if (days <= 0) return null;
-  const startR = interpolatedReadingsAt(readings, priorStart);
-  const endR = interpolatedReadingsAt(readings, billingStart);
-  const newTotal = calculateDifference(startR.newReading, endR.newReading);
-  const oldTotal = calculateDifference(startR.oldReading, endR.oldReading);
-  return { newPerDay: newTotal === "" ? null : newTotal / days, oldPerDay: oldTotal === "" ? null : oldTotal / days };
-}
-
 function projectMonth(daily: DailyPoint[], billingStart: Date, billingEnd: Date, now: Date, readings: CarriedReading[]) {
   const startKey = ymd(billingStart);
   const endKey = ymd(billingEnd);
   const periodDaily = daily.filter((d) => d.date >= startKey && d.date < endKey);
-  let completedNew = 0;
-  let completedOld = 0;
-  let completedDays = 0;
-  let currentDay: DailyPoint | null = null;
-  for (const d of periodDaily) {
-    if (d.completed) {
-      if (d.newMeter !== "") completedNew += Number(d.newMeter);
-      if (d.oldMeter !== "") completedOld += Number(d.oldMeter);
-      completedDays++;
-    } else currentDay = d;
-  }
+
+  // Future usage is intentionally meter-agnostic. Use the arithmetic mean of
+  // the last 15 completed billing-day totals, regardless of which meter was
+  // active on those days. This replaces the previous per-meter blended-rate
+  // projection.
+  const completed = periodDaily.filter((d) => d.completed && d.total !== "");
+  const rollingDays = completed.slice(-15);
+  const rolling15Total = rollingDays.reduce((sum, d) => sum + Number(d.total), 0);
+  const rolling15Days = rollingDays.length;
+  const rolling15Average = rolling15Days > 0 ? rolling15Total / rolling15Days : 0;
+
   const fullPeriodDays = (billingEnd.getTime() - billingStart.getTime()) / 86400000;
-  let partialFullNew = 0;
-  let partialFullOld = 0;
-  if (currentDay) {
-    const billingClock: BillingClock = { billingHour: billingStart.getHours(), billingMinute: billingStart.getMinutes() };
-    const dayStart = getFivePmDayStart(now, billingClock);
-    const dayEnd = new Date(dayStart);
-    dayEnd.setDate(dayEnd.getDate() + 1);
-    const elapsedWeight = profileWeightBetween(dayStart, now);
-    const fullWeight = profileWeightBetween(dayStart, dayEnd);
-    const fraction = fullWeight > 0 ? elapsedWeight / fullWeight : 0;
-    const partialNew = currentDay.newMeter === "" ? 0 : Number(currentDay.newMeter);
-    const partialOld = currentDay.oldMeter === "" ? 0 : Number(currentDay.oldMeter);
-    const completedDailyNew = periodDaily.filter((d) => d.completed && d.newMeter !== "").map((d) => Number(d.newMeter));
-    const fallbackNew = completedDailyNew.length ? completedDailyNew.reduce((a, b) => a + b, 0) / completedDailyNew.length : 0;
-    const completedDailyOld = periodDaily.filter((d) => d.completed && d.oldMeter !== "").map((d) => Number(d.oldMeter));
-    const fallbackOld = completedDailyOld.length ? completedDailyOld.reduce((a, b) => a + b, 0) / completedDailyOld.length : 0;
-    if (fraction >= 0.1 && elapsedWeight > 0 && fullWeight > 0) {
-      partialFullNew = (partialNew * fullWeight) / elapsedWeight;
-      partialFullOld = (partialOld * fullWeight) / elapsedWeight;
-    } else {
-      partialFullNew = Math.max(partialNew, fallbackNew);
-      partialFullOld = Math.max(partialOld, fallbackOld);
-    }
-  }
-  const futureDays = Math.max(0, fullPeriodDays - completedDays - (currentDay ? 1 : 0));
-  const prior = priorPeriodDailyAverages(readings, billingStart);
-  const observedDaysCount = completedDays + (currentDay ? 1 : 0);
-  const futureNew = blendedDailyRate(completedNew + partialFullNew, observedDaysCount, prior?.newPerDay ?? null);
-  const futureOld = blendedDailyRate(completedOld + partialFullOld, observedDaysCount, prior?.oldPerDay ?? null);
-  const projectedNew = completedNew + partialFullNew + futureNew * futureDays;
-  const projectedOld = completedOld + partialFullOld + futureOld * futureDays;
-  return { newMeter: projectedNew, oldMeter: projectedOld, total: projectedNew + projectedOld };
+  const elapsedDays = Math.max(0, Math.min(fullPeriodDays, (now.getTime() - billingStart.getTime()) / 86400000));
+  const remainingDays = Math.max(0, fullPeriodDays - elapsedDays);
+
+  // billingNew/billingOld already represent actual current-period usage. The
+  // projection therefore adds only future usage and never adds carry-forward.
+  const startR = interpolatedReadingsAt(readings, billingStart);
+  const currentR = readingsAtOrBefore(readings, now);
+  const actualNew = calculateDifference(startR.newReading, currentR.newReading);
+  const actualOld = calculateDifference(startR.oldReading, currentR.oldReading);
+  const actualTotal = sumKnown(actualNew, actualOld);
+
+  const futureTotal = rolling15Average * remainingDays;
+  const projectedTotal = (actualTotal === "" ? 0 : Number(actualTotal)) + futureTotal;
+
+  // Future units cannot be assigned to a physical meter from a combined
+  // average. Allocate them in proportion to current-period actual usage only
+  // for the meter-specific bill estimate; this does not affect projected total.
+  const actualNewNumber = actualNew === "" ? 0 : Number(actualNew);
+  const actualOldNumber = actualOld === "" ? 0 : Number(actualOld);
+  const actualMeterBase = actualNewNumber + actualOldNumber;
+  const newFuture = actualMeterBase > 0 ? futureTotal * actualNewNumber / actualMeterBase : futureTotal / 2;
+  const oldFuture = futureTotal - newFuture;
+
+  return {
+    newMeter: actualNewNumber + newFuture,
+    oldMeter: actualOldNumber + oldFuture,
+    total: projectedTotal,
+    actualNew: actualNewNumber,
+    actualOld: actualOldNumber,
+    futureNew: newFuture,
+    futureOld: oldFuture,
+    futureTotal,
+    remainingDays,
+    rolling15Total,
+    rolling15Days,
+    rolling15Average,
+  };
 }
 
 function activeDaysForMeter(readings: CarriedReading[], billingStart: Date, periodNow: Date, meter: "new" | "old"): number {
@@ -184,13 +171,6 @@ function activeDaysForMeter(readings: CarriedReading[], billingStart: Date, peri
   const end = periodNow.getTime();
   if (end <= start) return 0;
 
-  // Readings are already carry-forward normalized. A meter remains active through
-  // intervals where its register does not change (for example during solar hours
-  // or other zero-load periods); a flat interval must not silently erase active
-  // time. Track the last observed active meter and carry that state through
-  // zero/zero intervals.
-  const key = meter === "new" ? "newReading" : "oldReading";
-  const otherKey = meter === "new" ? "oldReading" : "newReading";
   const points = [
     { datetime: start, ...interpolatedReadingsAt(readings, billingStart) },
     ...readings.filter((r) => r.datetime > start && r.datetime < end),
@@ -217,15 +197,10 @@ function activeDaysForMeter(readings: CarriedReading[], billingStart: Date, peri
       lastActive = "old";
       if (meter === "old") activeMs += duration;
     } else if (newActive && oldActive) {
-      // Sparse readings can straddle a swap. Keep the existing proportional
-      // fallback only for this genuinely ambiguous interval.
-      const share = meter === "new"
-        ? newDelta / (newDelta + oldDelta)
-        : oldDelta / (newDelta + oldDelta);
+      const share = meter === "new" ? newDelta / (newDelta + oldDelta) : oldDelta / (newDelta + oldDelta);
       activeMs += duration * share;
       lastActive = null;
     } else if (lastActive === meter) {
-      // No register movement does not mean the meter was inactive.
       activeMs += duration;
     }
   }
@@ -294,6 +269,15 @@ export function computeDashboard(opts: {
     newMeter: billingNew === "" ? 0 : Number(billingNew),
     oldMeter: billingOld === "" ? 0 : Number(billingOld),
     total: billingTotal === "" ? 0 : Number(billingTotal),
+    actualNew: billingNew === "" ? 0 : Number(billingNew),
+    actualOld: billingOld === "" ? 0 : Number(billingOld),
+    futureNew: 0,
+    futureOld: 0,
+    futureTotal: 0,
+    remainingDays: 0,
+    rolling15Total: 0,
+    rolling15Days: 0,
+    rolling15Average: 0,
   };
 
   const periodReadings = readings.filter((r) => r.datetime >= billingStart.getTime() && r.datetime < billingEnd.getTime());
@@ -308,15 +292,9 @@ export function computeDashboard(opts: {
   const totalConsumptionCombined = totalConsumptionNew + totalConsumptionOld;
   const currentBill1 = calculateMeterBill(totalConsumptionNew, tariff1);
   const currentBill2 = calculateMeterBill(totalConsumptionOld, tariff2);
-  const projectedConsumptionNew = projection.newMeter + carryForwardNew;
-  const projectedConsumptionOld = projection.oldMeter + carryForwardOld;
-  const projectedConsumptionCombined = projectedConsumptionNew + projectedConsumptionOld;
-  // "Assume 50/50" should only guess at the *remaining* (not-yet-consumed)
-  // portion of the month, since that's the only part we don't know the
-  // real per-meter split for. Units already consumed are already known
-  // per meter from actual readings and must stay attributed to their real
-  // meter — splitting the whole projected total in half discarded that
-  // known data and just guessed at the entire month.
+  const projectedConsumptionNew = projection.newMeter;
+  const projectedConsumptionOld = projection.oldMeter;
+  const projectedConsumptionCombined = projection.total;
   const actualNewSoFar = billingNew === "" ? 0 : Number(billingNew);
   const actualOldSoFar = billingOld === "" ? 0 : Number(billingOld);
   const remainingTotal = isCurrent ? Math.max(0, projection.total - (actualNewSoFar + actualOldSoFar)) : 0;
@@ -333,7 +311,7 @@ export function computeDashboard(opts: {
   const hourly = getHourlyChartData(readings, hourlyStart, hourlyEnd);
   const hourlyDays = daily.filter((d) => d.total !== "").map((d) => ({ value: d.date, label: new Date(d.date + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) }));
   if (isCurrent) hourlyDays.unshift({ value: "last24", label: "Last 24 hours" });
-  const shareBase = totalConsumptionCombined > 0 ? totalConsumptionCombined : 0;
+  const shareBase = billingNew !== "" || billingOld !== "" ? (Number(billingNew || 0) + Number(billingOld || 0)) : 0;
   const activeDaysNew = activeDaysForMeter(readings, billingStart, periodNow, "new");
   const activeDaysOld = activeDaysForMeter(readings, billingStart, periodNow, "old");
 
@@ -378,15 +356,15 @@ export function computeDashboard(opts: {
     billingEnd: formatDateTime(billingEnd),
     billingProgress: isCurrent ? Math.max(0, Math.min(100, ((now.getTime() - billingStart.getTime()) / (billingEnd.getTime() - billingStart.getTime())) * 100)) : 100,
     billingMonth: formatBillingMonth(billingEnd),
-    goalPace: goalPace(totalConsumptionCombined, billingStart, billingEnd, isCurrent ? now : billingEnd, gs.goalCombinedUnits),
+    goalPace: goalPace(billingTotal === "" ? 0 : Number(billingTotal), billingStart, billingEnd, isCurrent ? now : billingEnd, gs.goalCombinedUnits),
     daily,
     hourly,
     hourlyDay: isCurrent ? "last24" : hourlyDays.at(-1)?.value ?? "",
     hourlyDays,
     isCurrentBillingMonth: isCurrent,
     availableMonthKey: ymd(billingStart),
-    effectiveCurrentRate: (isCurrent ? projectedConsumptionCombined : totalConsumptionCombined) > 0
-      ? (isCurrent ? projectedActual1.total + projectedActual2.total : currentBill1.total + currentBill2.total) / (isCurrent ? projectedConsumptionCombined : totalConsumptionCombined)
+    effectiveCurrentRate: (isCurrent ? projectedConsumptionCombined : billingTotal === "" ? 0 : Number(billingTotal)) > 0
+      ? (isCurrent ? projectedActual1.total + projectedActual2.total : currentBill1.total + currentBill2.total) / (isCurrent ? projectedConsumptionCombined : Number(billingTotal))
       : 0,
     carried: readings,
     billingStartDate: billingStart,
@@ -394,7 +372,7 @@ export function computeDashboard(opts: {
     projection,
     billing: { newMeter: billingNew, oldMeter: billingOld, total: billingTotal },
     last24: last24h,
-    goal: goalPace(totalConsumptionCombined, billingStart, billingEnd, isCurrent ? now : billingEnd, gs.goalCombinedUnits),
+    goal: goalPace(billingTotal === "" ? 0 : Number(billingTotal), billingStart, billingEnd, isCurrent ? now : billingEnd, gs.goalCombinedUnits),
     bill1: currentBill1,
     bill2: currentBill2,
     carry1,
