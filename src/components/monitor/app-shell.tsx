@@ -13,6 +13,7 @@ const PAGES = [
   { to: "/notes", label: "Notes" },
   { to: "/settings", label: "Settings" },
   { to: "/readings", label: "Readings" },
+  { to: "/ref", label: "Ref" },
 ] as const;
 
 function BrandIcon({ className = "size-4" }: { className?: string }) {
