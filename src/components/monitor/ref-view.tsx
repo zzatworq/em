@@ -1,7 +1,8 @@
 import { useMonitor } from "@/store/monitor";
 
 function Formula({ children }: { children: React.ReactNode }) {
-  return <div className="mt-3 overflow-x-auto rounded-lg border border-border bg-background px-4 py-3 font-mono text-sm leading-7 text-foreground">{children}</div>;
+  const value = typeof children === "string" ? children.replace(/\\n/g, "\n") : children;
+  return <div className="mt-3 overflow-x-auto rounded-lg border border-border bg-background px-4 py-3 font-mono text-sm leading-7 text-foreground whitespace-pre-line">{value}</div>;
 }
 
 function Section({ title, source, children }: { title: string; source?: string; children: React.ReactNode }) {
