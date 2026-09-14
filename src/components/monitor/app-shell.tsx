@@ -7,13 +7,17 @@ import { loadMonitorData, saveMonitorData, type MonitorData } from "@/lib/monito
 import { useDashboard, useMonitor } from "@/store/monitor";
 
 const PAGES = [
-  { to: "/", label: "Summary" },
+  { to: "/", label: "Overview" },
   { to: "/bill", label: "Bill" },
   { to: "/history", label: "History" },
   { to: "/notes", label: "Notes" },
   { to: "/settings", label: "Settings" },
   { to: "/readings", label: "Readings" },
 ] as const;
+
+function BrandIcon({ className = "size-4" }: { className?: string }) {
+  return <Zap className={cn(className, "text-white")} fill="white" strokeWidth={1.75} aria-hidden="true" />;
+}
 
 function dataFromStore(): MonitorData {
   const s = useMonitor.getState();
@@ -67,7 +71,7 @@ export function AppShell() {
       <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <Link to="/" className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-lg bg-foreground text-background"><Zap className="size-4" strokeWidth={1.75} /></div>
+            <div className="flex size-10 items-center justify-center rounded-lg bg-foreground"><BrandIcon className="size-4" /></div>
             <div className="min-w-0"><h1 className="truncate font-display text-lg font-medium tracking-tight">Electricity Monitor</h1><p className="truncate text-xs text-muted">{months.length ? `Latest ${months[0]?.label}` : "No readings yet"}</p></div>
           </Link>
           {general.v1Url.trim() ? <Button asChild variant="outline" size="sm" className="shrink-0 gap-1.5"><a href={general.v1Url.trim()} target="_blank" rel="noreferrer"><ExternalLink className="size-3.5" /><span className="hidden sm:inline">V1</span></a></Button> : null}
