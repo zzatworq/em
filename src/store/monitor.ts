@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { defaultTariff, DEFAULT_GENERAL } from "@/lib/engine/defaults";
 import { syncCollectionHistory } from "@/lib/engine/history";
 import { availableMonths, computeDashboard, hourlyForDay } from "@/lib/engine/dashboard";
+import { getHourlyDistributionProfile } from "@/lib/engine/hourly-profile";
 import type { MonitorData } from "@/lib/monitor-data";
 import type { Collection, GeneralSettings, HourlyPoint, Note, ReadingInput, Tariff } from "@/lib/engine/types";
 
@@ -26,5 +27,6 @@ export function useDashboard() {
   const readings = useMonitor((s) => s.readings), collections = useMonitor((s) => s.collections), general = useMonitor((s) => s.general), tariff1 = useMonitor((s) => s.tariff1), tariff2 = useMonitor((s) => s.tariff2), selectedMonth = useMonitor((s) => s.selectedMonth);
   const now = new Date(), months = availableMonths(readings, now, general), selectedStart = selectedMonth ? new Date(Number(selectedMonth)) : null;
   const dashboard = computeDashboard({ inputs: readings, now, selectedStart: selectedStart && !Number.isNaN(selectedStart.getTime()) ? selectedStart : null, gs: general, tariff1, tariff2, collections });
-  return { dashboard, months, now };
+  const hourlyProfile = getHourlyDistributionProfile(readings, general, now);
+  return { dashboard, months, now, hourlyProfile };
 }
