@@ -50,19 +50,19 @@ function MeterCard({
       </p>
       <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-4 text-sm">
         <div>
-          <dt className="text-xs text-muted">Average</dt>
+          <dt className="text-xs text-muted">Daily average</dt>
           <dd className="tabular-nums">{units(average)} <span className="text-xs font-normal text-subtle">kWh/d</span></dd><p className="mt-0.5 text-[11px] text-subtle">{units(activeDays, 1)} active days</p>
         </div>
         <div>
-          <dt className="text-xs text-muted">Bill so far</dt>
+          <dt className="text-xs text-muted">Bill to date</dt>
           <dd className="tabular-nums">{money(bill)}</dd>
         </div>
         <div>
-          <dt className="text-xs text-muted">Current</dt>
+          <dt className="text-xs text-muted">Latest reading</dt>
           <dd className="tabular-nums">{units(current)}</dd>
         </div>
         <div>
-          <dt className="text-xs text-muted">Period start</dt>
+          <dt className="text-xs text-muted">Starting reading</dt>
           <dd className="tabular-nums">{units(initial)}</dd>
         </div>
       </dl>
@@ -87,8 +87,6 @@ export function SummaryView() {
   const d = dashboard;
   const hourly = hourlyOverride ?? d.hourly;
   const pace = d.goalPace;
-  // Total usage is the amount actually consumed so far. The projected month
-  // estimate is shown separately and is used for the projected bill.
   const displayedUsage = d.totalConsumptionCombined;
   const projectedUsage = d.isCurrentBillingMonth ? d.projectedTotal : d.totalConsumptionCombined;
   const displayedBill = d.isCurrentBillingMonth ? d.projectedBillActualTotal : d.currentBillNew + d.currentBillOld;
@@ -110,10 +108,7 @@ export function SummaryView() {
           </p>
         </div>
         <div className="relative mt-4 h-2 overflow-hidden rounded-full bg-muted">
-          <div
-            className="h-full rounded-full bg-foreground transition-[width] duration-[var(--motion-slow)]"
-            style={{ width: `${Math.min(100, Number(d.billingProgress)).toFixed(2)}%` }}
-          />
+          <div className="h-full rounded-full bg-foreground transition-[width] duration-[var(--motion-slow)]" style={{ width: `${Math.min(100, Number(d.billingProgress)).toFixed(2)}%` }} />
         </div>
       </section>
 
@@ -121,45 +116,27 @@ export function SummaryView() {
         <section className="rounded-2xl bg-elevated p-5 shadow-border lg:col-span-2 sm:p-6">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-muted">Total usage</p>
+              <p className="text-xs font-medium uppercase tracking-wider text-muted">Total consumption</p>
               <p className="mt-1 font-display text-5xl font-medium tracking-tight tabular-nums sm:text-6xl">
                 {units(displayedUsage)}
                 <span className="ml-2 text-lg font-normal text-subtle">kWh</span>
               </p>
             </div>
             <div className="text-right">
-              <p className="text-xs text-muted">{d.isCurrentBillingMonth ? "Estimated month" : "Calculated bill"}</p>
+              <p className="text-xs text-muted">{d.isCurrentBillingMonth ? "Projected month" : "Calculated bill"}</p>
               {d.isCurrentBillingMonth ? <p className="font-display text-2xl tabular-nums">{units(projectedUsage)} <span className="text-base font-normal text-subtle">kWh</span></p> : <p className="font-display text-2xl tabular-nums">{money(displayedBill)}</p>}
               {d.isCurrentBillingMonth ? <p className="mt-0.5 font-mono text-xs text-subtle tabular-nums">{money(displayedBill)} · {units(projectedUsage)} × {effectiveRate.toFixed(2)}</p> : null}
             </div>
           </div>
-          <p className="mt-2 font-mono text-xs text-subtle tabular-nums">
-            {units(d.billingTotal)} + {units((d.carryForwardNew || 0) + (d.carryForwardOld || 0))}
-          </p>
+          <p className="mt-2 font-mono text-xs text-subtle tabular-nums">{units(d.billingTotal)} + {units((d.carryForwardNew || 0) + (d.carryForwardOld || 0))}</p>
           <div className="mt-6 grid grid-cols-2 gap-4 border-t border-border pt-5 sm:grid-cols-4">
-            <Stat label="Last 24 h" value={units(d.last24Total)} unit="kWh" />
-            <Stat label="Daily avg" value={units(pace.dailyAverage)} unit="kWh/d" />
-            <Stat
-              label="To goal"
-              value={pace.remainingUnits > 0 ? units(pace.remainingUnits) : "Exceeded"}
-              unit={pace.remainingUnits > 0 ? "kWh" : undefined}
-            />
-            <Stat
-              label="Required daily"
-              value={
-                pace.requiredDailyAverage === ""
-                  ? pace.overGoal
-                    ? "Over"
-                    : "—"
-                  : units(pace.requiredDailyAverage)
-              }
-              unit={pace.requiredDailyAverage === "" ? undefined : "kWh/d"}
-            />
+            <Stat label="Last 24 hours" value={units(d.last24Total)} unit="kWh" />
+            <Stat label="Daily average" value={units(pace.dailyAverage)} unit="kWh/d" />
+            <Stat label="Remaining to goal" value={pace.remainingUnits > 0 ? units(pace.remainingUnits) : "Exceeded"} unit={pace.remainingUnits > 0 ? "kWh" : undefined} />
+            <Stat label="Daily allowance" value={pace.requiredDailyAverage === "" ? pace.overGoal ? "Over" : "—" : units(pace.requiredDailyAverage)} unit={pace.requiredDailyAverage === "" ? undefined : "kWh/d"} />
           </div>
           <p className="mt-4 text-pretty text-sm text-muted">
-            {pace.overGoal
-              ? `Combined goal exceeded by ${units(Math.abs(pace.remainingUnits))} kWh.`
-              : `Stay at or below ${pace.requiredDailyAverage === "" ? "0" : units(pace.requiredDailyAverage)} kWh/d to finish on target.`}
+            {pace.overGoal ? `Combined goal exceeded by ${units(Math.abs(pace.remainingUnits))} kWh.` : `Stay at or below ${pace.requiredDailyAverage === "" ? "0" : units(pace.requiredDailyAverage)} kWh/d to finish on target.`}
           </p>
           <div className="mt-5">
             <div className="mb-1.5 flex justify-between text-xs text-muted">
@@ -181,10 +158,7 @@ export function SummaryView() {
       <section className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="font-display text-lg font-medium">Daily consumption</h3>
-          <div className="flex items-center gap-3 text-xs text-muted">
-            <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-meter1" /> Meter 1</span>
-            <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-meter2" /> Meter 2</span>
-          </div>
+          <div className="flex items-center gap-3 text-xs text-muted"><span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-meter1" /> Meter 1</span><span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-meter2" /> Meter 2</span></div>
         </div>
         <UsageChart points={d.daily} onBarClick={(i) => { const point = d.daily[i] as DailyPoint | undefined; if (point) setHourlyDay(point.date); }} />
       </section>
