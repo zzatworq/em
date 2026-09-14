@@ -16,6 +16,7 @@ import { Route as HistoryRouteImport } from './routes/_app/history'
 import { Route as NotesRouteImport } from './routes/_app/notes'
 import { Route as SettingsRouteImport } from './routes/_app/settings'
 import { Route as ReadingsRouteImport } from './routes/_app/readings'
+import { Route as RefRouteImport } from './routes/_app/ref'
 import { Route as HealthCheckRouteImport } from './routes/health-check'
 
 const _appRoute = _appRouteImport.update({
@@ -52,6 +53,11 @@ const ReadingsRoute = ReadingsRouteImport.update({
   path: '/readings',
   getParentRoute: () => _appRoute,
 } as any)
+const RefRoute = RefRouteImport.update({
+  id: '/_app/ref',
+  path: '/ref',
+  getParentRoute: () => _appRoute,
+} as any)
 const HealthCheckRoute = HealthCheckRouteImport.update({
   id: '/health-check',
   path: '/health-check',
@@ -65,6 +71,7 @@ const _appRouteChildren = {
   NotesRoute: NotesRoute,
   SettingsRoute: SettingsRoute,
   ReadingsRoute: ReadingsRoute,
+  RefRoute: RefRoute,
 }
 
 export interface FileRoutesByFullPath {
@@ -74,6 +81,7 @@ export interface FileRoutesByFullPath {
   '/notes': typeof NotesRoute
   '/settings': typeof SettingsRoute
   '/readings': typeof ReadingsRoute
+  '/ref': typeof RefRoute
   '/health-check': typeof HealthCheckRoute
 }
 export interface FileRoutesByTo {
@@ -83,6 +91,7 @@ export interface FileRoutesByTo {
   '/notes': typeof NotesRoute
   '/settings': typeof SettingsRoute
   '/readings': typeof ReadingsRoute
+  '/ref': typeof RefRoute
   '/health-check': typeof HealthCheckRoute
 }
 export interface FileRoutesById {
@@ -94,14 +103,15 @@ export interface FileRoutesById {
   '/_app/notes': typeof NotesRoute
   '/_app/settings': typeof SettingsRoute
   '/_app/readings': typeof ReadingsRoute
+  '/_app/ref': typeof RefRoute
   '/health-check': typeof HealthCheckRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/bill' | '/history' | '/notes' | '/settings' | '/readings' | '/health-check'
+  fullPaths: '/' | '/bill' | '/history' | '/notes' | '/settings' | '/readings' | '/ref' | '/health-check'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/bill' | '/history' | '/notes' | '/settings' | '/readings' | '/health-check'
-  id: '__root__' | '/_app' | '/_app/' | '/_app/bill' | '/_app/history' | '/_app/notes' | '/_app/settings' | '/_app/readings' | '/health-check'
+  to: '/' | '/bill' | '/history' | '/notes' | '/settings' | '/readings' | '/ref' | '/health-check'
+  id: '__root__' | '/_app' | '/_app/' | '/_app/bill' | '/_app/history' | '/_app/notes' | '/_app/settings' | '/_app/readings' | '/_app/ref' | '/health-check'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -158,6 +168,13 @@ declare module '@tanstack/react-router' {
       path: '/readings'
       fullPath: '/readings'
       preLoaderRoute: typeof ReadingsRouteImport
+      parentRoute: typeof _appRoute
+    }
+    '/_app/ref': {
+      id: '/_app/ref'
+      path: '/ref'
+      fullPath: '/ref'
+      preLoaderRoute: typeof RefRouteImport
       parentRoute: typeof _appRoute
     }
     '/health-check': {
