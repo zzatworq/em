@@ -89,12 +89,12 @@ export function profileWeightBetween(start: Date, end: Date): number {
   return total;
 }
 
-export function money(value: number | "" | null | undefined): string {
+export function money(value: number | string | "" | null | undefined): string {
   if (value === "" || value == null || Number.isNaN(Number(value))) return "—";
   return `Rs ${Number(value).toLocaleString("en-PK", { maximumFractionDigits: 0 })}`;
 }
 
-export function units(value: number | "" | null | undefined, digits = 2): string {
+export function units(value: number | string | "" | null | undefined, digits = 2): string {
   if (value === "" || value == null || Number.isNaN(Number(value))) return "—";
   return Number(value).toFixed(digits);
 }
