@@ -68,7 +68,6 @@ export type Collection = {
   rawReading: number;
   extendedDays?: number;
   standardDays?: number;
-  /** Optional official bill information attached to this collection. */
   status?: string;
   bill?: number;
   payment?: number;
@@ -129,6 +128,12 @@ export type HourlyPoint = {
   newMeter: number | "";
   oldMeter: number | "";
   total: number | "";
+};
+
+export type HourlyProfilePoint = {
+  hour: number;
+  fraction: number;
+  percent: number;
 };
 
 export type ProRata = {
