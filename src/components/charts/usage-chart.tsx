@@ -1,42 +1,34 @@
 import { useEffect, useState } from "react";
-import { Bar, BarChart, CartesianGrid, LabelList, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import type { DailyPoint, HourlyPoint, HourlyProfilePoint } from "@/lib/engine/types";
+import { Bar, BarChart, CartesianGrid, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import type { DailyPoint, HourlyPoint } from "@/lib/engine/types";
 import { units } from "@/lib/engine/time";
 
-type Row = { label: string; meter1: number; meter2: number; total: number; profile: number | null; profilePercent: number | null };
+type Row = { label: string; meter1: number; meter2: number; total: number };
 
-function toRows(points: Array<DailyPoint | HourlyPoint>, profile?: HourlyProfilePoint[]): Row[] {
-  const isHourly = points.length > 0 && "start" in points[0];
-  const actualTotal = isHourly ? points.reduce((sum, p) => sum + Number(p.total === "" ? 0 : p.total), 0) : 0;
+function toRows(points: Array<DailyPoint | HourlyPoint>): Row[] {
   return points.map((p) => {
     const meter1 = p.newMeter === "" ? 0 : Number(p.newMeter);
     const meter2 = p.oldMeter === "" ? 0 : Number(p.oldMeter);
-    const total = meter1 + meter2;
-    const hour = isHourly ? new Date((p as HourlyPoint).start).getHours() : -1;
-    const match = profile?.find((x) => x.hour === hour);
-    return { label: p.label, meter1, meter2, total, profile: match && actualTotal > 0 ? match.fraction * actualTotal : null, profilePercent: match?.percent ?? null };
+    return { label: p.label, meter1, meter2, total: meter1 + meter2 };
   });
 }
 
-function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number; dataKey: string; color: string; payload?: Row }>; label?: string }) {
+function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number; dataKey: string }>; label?: string }) {
   if (!active || !payload?.length) return null;
   const m1 = payload.find((p) => p.dataKey === "meter1")?.value ?? 0;
   const m2 = payload.find((p) => p.dataKey === "meter2")?.value ?? 0;
-  const profile = payload.find((p) => p.dataKey === "profile")?.value;
-  const percent = payload.find((p) => p.dataKey === "profile")?.payload?.profilePercent;
-  return <div className="rounded-lg border border-border bg-elevated px-3 py-2 text-xs shadow-border"><p className="mb-1 font-medium text-foreground">{label}</p><p className="text-meter1">Meter 1 · {units(m1)} kWh</p><p className="text-meter2">Meter 2 · {units(m2)} kWh</p><p className="mt-1 text-muted">Total · {units(m1 + m2)} kWh</p>{profile != null ? <p className="mt-1 text-subtle">Historical profile · {units(profile)} kWh ({Number(percent ?? 0).toFixed(1)}%)</p> : null}</div>;
+  return <div className="rounded-lg border border-border bg-elevated px-3 py-2 text-xs shadow-border"><p className="mb-1 font-medium text-foreground">{label}</p><p className="text-meter1">Meter 1 · {units(m1)} kWh</p><p className="text-meter2">Meter 2 · {units(m2)} kWh</p><p className="mt-1 text-muted">Total · {units(m1 + m2)} kWh</p></div>;
 }
 
 function themeColor(name: string, fallback: string) { if (typeof document === "undefined") return fallback; const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim(); return v || fallback; }
-function formatBarTotal(value: number) { if (value < 1) return value.toFixed(2).replace(/^0\./, "."); return value.toFixed(1); }
+function formatBarTotal(value: number) { if (value < 1) return value.toFixed(2).replace(/^0\\./, "."); return value.toFixed(1); }
 function BarValue({ x, y, width, value }: { x?: number; y?: number; width?: number; value?: number }) { if (value == null || value <= 0 || x == null || y == null || width == null) return null; return <text x={x + width / 2} y={Math.max(y - 6, 14)} textAnchor="middle" fill="var(--color-foreground)" fontSize={9} fontWeight={600}>{formatBarTotal(value)}</text>; }
 
-export function UsageChart({ points, onBarClick, hourlyProfile }: { points: Array<DailyPoint | HourlyPoint>; onBarClick?: (index: number) => void; hourlyProfile?: HourlyProfilePoint[] }) {
+export function UsageChart({ points, onBarClick }: { points: Array<DailyPoint | HourlyPoint>; onBarClick?: (index: number) => void }) {
   const [ready, setReady] = useState(false);
-  const [fills, setFills] = useState({ m1: "#e7e4d8", m2: "#7d9e94", grid: "#3a3c36", profile: "#E3B341" });
-  useEffect(() => { setFills({ m1: themeColor("--color-meter1", "#e7e4d8"), m2: themeColor("--color-meter2", "#7d9e94"), grid: themeColor("--color-border", "#3a3c36"), profile: themeColor("--color-profile", "#E3B341") }); setReady(true); }, []);
-  const data = toRows(points, hourlyProfile);
-  const showProfile = Boolean(hourlyProfile?.length && points.length && "start" in points[0]);
+  const [fills, setFills] = useState({ m1: "#e7e4d8", m2: "#7d9e94", grid: "#3a3c36" });
+  useEffect(() => { setFills({ m1: themeColor("--color-meter1", "#e7e4d8"), m2: themeColor("--color-meter2", "#7d9e94"), grid: themeColor("--color-border", "#3a3c36") }); setReady(true); }, []);
+  const data = toRows(points);
   if (!ready) return <div className="h-80 w-full rounded-lg bg-muted/40" />;
-  return <div className="h-80 w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={data} margin={{ top: 28, right: 4, left: -18, bottom: 0 }} onClick={(state) => { if (onBarClick && state?.activeTooltipIndex != null) onBarClick(Number(state.activeTooltipIndex)); }}><CartesianGrid stroke={fills.grid} vertical={false} /><XAxis dataKey="label" tick={{ fill: "var(--color-muted)", fontSize: 11 }} axisLine={false} tickLine={false} interval="preserveStartEnd" /><YAxis tick={{ fill: "var(--color-muted)", fontSize: 11 }} axisLine={false} tickLine={false} width={40} /><Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(236,235,228,0.06)" }} /><Bar dataKey="meter1" stackId="s" fill={fills.m1} maxBarSize={22} /><Bar dataKey="meter2" stackId="s" fill={fills.m2} radius={[3, 3, 0, 0]} maxBarSize={22}><LabelList dataKey="total" content={<BarValue />} /></Bar>{showProfile ? <Line type="monotone" dataKey="profile" stroke={fills.profile} strokeWidth={2} dot={false} connectNulls name="Historical profile" /> : null}</BarChart></ResponsiveContainer></div>;
+  return <div className="h-80 w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={data} margin={{ top: 28, right: 4, left: -18, bottom: 0 }} onClick={(state) => { if (onBarClick && state?.activeTooltipIndex != null) onBarClick(Number(state.activeTooltipIndex)); }}><CartesianGrid stroke={fills.grid} vertical={false} /><XAxis dataKey="label" tick={{ fill: "var(--color-muted)", fontSize: 11 }} axisLine={false} tickLine={false} interval="preserveStartEnd" /><YAxis tick={{ fill: "var(--color-muted)", fontSize: 11 }} axisLine={false} tickLine={false} width={40} /><Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(236,235,228,0.06)" }} /><Bar dataKey="meter1" stackId="s" fill={fills.m1} maxBarSize={22} /><Bar dataKey="meter2" stackId="s" fill={fills.m2} radius={[3, 3, 0, 0]} maxBarSize={22}><LabelList dataKey="total" content={<BarValue />} /></Bar></BarChart></ResponsiveContainer></div>;
 }
