@@ -1,24 +1,20 @@
 /**
- * Deployed-app (Nitro) half of the platform PWA chrome. Auto-registered as
- * global h3 middleware when Nitro is loaded and `serverDir: "./server"` is
- * set, so Nitro v3 scans this directory.
+ * Cloudflare Workers half of the platform PWA chrome.
  *
- * NOT CURRENTLY ACTIVE: this app deploys to Cloudflare Workers
- * (wrangler.jsonc, `@cloudflare/vite-plugin`), and that pipeline never loads
- * Nitro, so this file never runs in production. The equivalent logic for the
- * actual deploy target lives in `src/lib/grok-pwa-worker.ts`, wired into
- * `src/server.ts`. Kept here in case a future Nitro/Vercel target returns.
+ * `server/middleware/grok-pwa.ts` implements the same behavior for Nitro, but
+ * this app deploys to Cloudflare Workers (see wrangler.jsonc) via
+ * `@cloudflare/vite-plugin`, which never loads Nitro — Nitro is what scans
+ * `server/` for h3 middleware, and it isn't part of this build at all. That
+ * left the install-page / manifest / OG-tag-injection feature silently dead
+ * in production. This file re-implements it directly against the standard
+ * Fetch API (Request/Response/TransformStream), so it runs inside the actual
+ * Worker `fetch` handler in `src/server.ts`.
  *
- * - `?install=1&platform=ios` on a document path → the Home Screen tutorial,
- *   bundled into the server build via `?raw` (the public/ directory is CDN
- *   static output on Vercel and not readable from the function).
- * - `/__grok/manifest.webmanifest` → per-app-named manifest (kept out of
- *   public/ so this dynamic response is the only one).
+ * - `?install=1&platform=ios` on a document path → the Home Screen tutorial.
+ * - `/__grok/manifest.webmanifest` → per-app-named manifest.
  * - Other HTML documents → stream-inject PWA + OG head tags at `</head>`.
  *   OG identity is baked via `virtual:grok-og-identity` at `vite build`
- *   (this function cannot read `src/lib/og/site.json` or `public/og.jpg`).
- *   This must be a middleware transforming `next()`: h3 discards the `response`
- *   runtime hook's return value, and `render:html` does not exist in Nitro v3.
+ *   (this module has no real filesystem at request time in a Worker).
  */
 import installPageTemplate from "../../scripts/install-page.html?raw";
 import { grokOgIdentity } from "virtual:grok-og-identity";
@@ -31,15 +27,8 @@ import {
   renderWebManifest,
 } from "../../scripts/grok-pwa-shared.mjs";
 
-interface GrokPwaEvent {
-  url: URL;
-  req: { method: string; headers: Headers };
-}
-
-function requestHost(event: GrokPwaEvent): string {
-  return (
-    event.req.headers.get("x-forwarded-host") ?? event.req.headers.get("host") ?? event.url.host
-  );
+function requestHost(request: Request, url: URL): string {
+  return request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? url.host;
 }
 
 function injectHeadStreaming(response: Response, host: string): Response {
@@ -66,18 +55,24 @@ function injectHeadStreaming(response: Response, host: string): Response {
   });
 }
 
-export default async function grokPwaMiddleware(
-  event: GrokPwaEvent,
-  next: () => unknown | Promise<unknown>,
-): Promise<unknown> {
-  const method = (event.req.method ?? "GET").toUpperCase();
-  if (method !== "GET") return next();
+/**
+ * Wraps a Worker `fetch` handler with the platform PWA chrome. `next` is only
+ * called when this middleware isn't short-circuiting the request itself, and
+ * its response is passed through untouched unless it's a streamable HTML
+ * document response.
+ */
+export async function withGrokPwaChrome(
+  request: Request,
+  next: () => Promise<Response>,
+): Promise<Response> {
+  if (request.method.toUpperCase() !== "GET") return next();
 
-  const path = event.url.pathname;
-  const urlWithQuery = path + event.url.search;
+  const url = new URL(request.url);
+  const path = url.pathname;
+  const urlWithQuery = path + url.search;
 
   if (path === "/__grok/manifest.webmanifest" || path === "/__grok/manifest.json") {
-    return new Response(renderWebManifest(requestHost(event)), {
+    return new Response(renderWebManifest(requestHost(request, url)), {
       headers: {
         "content-type": "application/manifest+json; charset=utf-8",
         "cache-control": "no-cache",
@@ -88,10 +83,10 @@ export default async function grokPwaMiddleware(
   if (
     isInstallQuery(urlWithQuery) &&
     isDocumentPath(path) &&
-    acceptsHtml(event.req.headers.get("accept"))
+    acceptsHtml(request.headers.get("accept"))
   ) {
     const html = renderInstallPageHtml(installPageTemplate, {
-      host: requestHost(event),
+      host: requestHost(request, url),
       url: urlWithQuery,
     });
     return new Response(html, {
@@ -106,12 +101,11 @@ export default async function grokPwaMiddleware(
 
   const result = await next();
   if (
-    result instanceof Response &&
     result.body &&
     String(result.headers.get("content-type") ?? "").includes("text/html") &&
     !result.headers.get("content-encoding")
   ) {
-    return injectHeadStreaming(result, requestHost(event));
+    return injectHeadStreaming(result, requestHost(request, url));
   }
   return result;
 }

@@ -480,12 +480,20 @@ test("renders the manifest with the per-app name", () => {
   assert.equal(manifest.icons[0].src, "/__grok/icon-180.png");
 });
 
-// Tripwires: the deployed-app path only works if Nitro scans server/ — an
-// accidental edit that drops serverDir or the middleware file would otherwise
-// fail silently (published apps would just render the app for ?install=1).
-test("vite config keeps the nitro serverDir wiring", () => {
+// Tripwire: this app deploys to Cloudflare Workers, not Nitro/Vercel, so the
+// deployed-app PWA chrome (install page, manifest, OG tags) only works if
+// src/server.ts wraps its fetch handler with withGrokPwaChrome — an accidental
+// edit that drops that wiring would otherwise fail silently (published apps
+// would just render the app for ?install=1). See src/lib/grok-pwa-worker.ts
+// for why this isn't the Nitro serverDir wiring that other app-builder
+// templates rely on.
+test("the Worker fetch handler keeps the grok PWA chrome wiring", () => {
+  const serverEntry = readFileSync(join(TEMPLATE_ROOT, "src/server.ts"), "utf8");
+  assert.match(serverEntry, /withGrokPwaChrome/);
+});
+
+test("vite config still mounts grokPwaPlugin (bakes OG identity, dev/preview chrome)", () => {
   const viteConfig = readFileSync(join(TEMPLATE_ROOT, "vite.config.ts"), "utf8");
-  assert.match(viteConfig, /serverDir:\s*"\.\/server"/);
   assert.match(viteConfig, /grokPwaPlugin\(\)/);
 });
 
