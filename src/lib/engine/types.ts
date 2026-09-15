@@ -66,6 +66,7 @@ export type Collection = {
   time: string;
   previousBaseline: number;
   rawReading: number;
+  billedReading?: number;
   extendedDays?: number;
   standardDays?: number;
   status?: string;
