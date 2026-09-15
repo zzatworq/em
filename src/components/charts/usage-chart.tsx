@@ -33,8 +33,8 @@ function BarValue({ x, y, width, value }: { x?: number; y?: number; width?: numb
 
 export function UsageChart({ points, onBarClick, hourlyProfile }: { points: Array<DailyPoint | HourlyPoint>; onBarClick?: (index: number) => void; hourlyProfile?: HourlyProfilePoint[] }) {
   const [ready, setReady] = useState(false);
-  const [fills, setFills] = useState({ m1: "#e7e4d8", m2: "#7d9e94", grid: "#3a3c36", profile: "#c4b5fd" });
-  useEffect(() => { setFills({ m1: themeColor("--color-meter1", "#e7e4d8"), m2: themeColor("--color-meter2", "#7d9e94"), grid: themeColor("--color-border", "#3a3c36"), profile: themeColor("--color-meter2", "#c4b5fd") }); setReady(true); }, []);
+  const [fills, setFills] = useState({ m1: "#e7e4d8", m2: "#7d9e94", grid: "#3a3c36", profile: "#E3B341" });
+  useEffect(() => { setFills({ m1: themeColor("--color-meter1", "#e7e4d8"), m2: themeColor("--color-meter2", "#7d9e94"), grid: themeColor("--color-border", "#3a3c36"), profile: themeColor("--color-profile", "#E3B341") }); setReady(true); }, []);
   const data = toRows(points, hourlyProfile);
   const showProfile = Boolean(hourlyProfile?.length && points.length && "start" in points[0]);
   if (!ready) return <div className="h-80 w-full rounded-lg bg-muted/40" />;
