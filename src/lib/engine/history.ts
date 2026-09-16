@@ -1,5 +1,5 @@
 import { calculateProRata } from "./bill";
-import type { Collection, HistoryRow } from "./types";
+import type { Collection, HistoryRow, MeterId } from "./types";
 
 function collectionTime(c: Collection): number {
   const value = new Date(`${c.date}T${c.time || "00:00"}:00`).getTime();
@@ -53,6 +53,57 @@ export function rebuildCollectionChain(collections: Collection[]): Collection[] 
   return result;
 }
 
+function monthKey(month: string): number {
+  const match = month.trim().match(/^([A-Za-z]{3})\s+(\d{2}|\d{4})$/);
+  if (!match) return Number.POSITIVE_INFINITY;
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const monthIndex = months.findIndex((m) => m.toLowerCase() === match[1].toLowerCase());
+  if (monthIndex < 0) return Number.POSITIVE_INFINITY;
+  const year = Number(match[2].length === 2 ? `20${match[2]}` : match[2]);
+  return year * 12 + monthIndex;
+}
+
+/**
+ * Older stored History rows were created before the Reading column existed,
+ * so they can still have `reading` missing in Durable Object storage. Fill
+ * those rows from the known end-of-July-2026 meter readings and the recorded
+ * billed units, working backward successively. Existing readings are never
+ * overwritten.
+ */
+function backfillHistoricalReadings(history: HistoryRow[]): HistoryRow[] {
+  const anchors: Record<MeterId, { month: string; reading: number }> = {
+    "METER 1": { month: "Jul 26", reading: 2435 },
+    "METER 2": { month: "Jul 26", reading: 5854 },
+  };
+
+  return (["METER 1", "METER 2"] as const).flatMap((meter) => {
+    const rows = history
+      .map((row, index) => ({ row, index }))
+      .filter(({ row }) => row.meter === meter)
+      .sort((a, b) => monthKey(a.row.month) - monthKey(b.row.month));
+    if (!rows.length) return [];
+
+    const anchorIndex = rows.findIndex(({ row }) => row.month === anchors[meter].month);
+    if (anchorIndex < 0) return rows.map(({ row }) => row);
+
+    const readings = new Map<number, number>();
+    readings.set(rows[anchorIndex].index, anchors[meter].reading);
+
+    // Work backward: previous reading = next reading - next month's units.
+    let reading = anchors[meter].reading;
+    for (let i = anchorIndex - 1; i >= 0; i--) {
+      reading -= Number(rows[i + 1].row.units) || 0;
+      readings.set(rows[i].index, reading);
+    }
+
+    return rows.map(({ row, index }) => {
+      if (row.reading != null && Number.isFinite(row.reading)) return row;
+      const calculated = readings.get(index);
+      return calculated == null ? row : { ...row, reading: calculated };
+    });
+  });
+}
+
 export function collectionHistory(collections: Collection[]): HistoryRow[] {
   const chained = rebuildCollectionChain(collections);
   return chained.map((c) => {
@@ -83,5 +134,5 @@ export function syncCollectionHistory(history: HistoryRow[], collections: Collec
   const generated = collectionHistory(collections);
   const generatedHistoryIds = new Set(generated.map((h) => h.id));
   const manualOrLegacy = history.filter((h) => !h.id.startsWith("collection-history-") && !generatedHistoryIds.has(h.id));
-  return [...manualOrLegacy, ...generated];
+  return [...backfillHistoricalReadings(manualOrLegacy), ...generated];
 }
