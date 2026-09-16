@@ -66,6 +66,7 @@ export function collectionHistory(collections: Collection[]): HistoryRow[] {
       meter: c.meter,
       status: c.status || "EX",
       units: billedUnits,
+      reading: c.billedReading,
       bill: Number.isFinite(c.bill) ? Number(c.bill) : 0,
       payment: Number.isFinite(c.payment) ? Number(c.payment) : 0,
     };
