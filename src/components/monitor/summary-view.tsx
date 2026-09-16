@@ -1,7 +1,8 @@
 import { UsageChart } from "@/components/charts/usage-chart";
 import { useDashboard, useMonitor } from "@/store/monitor";
-import { money, units } from "@/lib/engine/time";
-import type { DailyPoint, HourlyProfilePoint } from "@/lib/engine/types";
+import { money, units, addMonth, getBillingPeriodStart } from "@/lib/engine/time";
+import { applyCarryForward, interpolatedReadingsAt } from "@/lib/engine/readings";
+import type { DailyPoint, HourlyProfilePoint, ReadingInput } from "@/lib/engine/types";
 import { useEffect, useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
@@ -11,6 +12,69 @@ function Stat({ label, value, unit, hint }: { label: string; value: string; unit
 
 function MeterCard({ title, tone, billing, carry, average, activeDays, bill, current, initial }: { title: string; tone: "meter1" | "meter2"; billing: number | ""; carry: number; average: number | ""; activeDays: number; bill: number; current: number | null; initial: number | null }) {
   return <article className="rounded-xl bg-elevated p-5 shadow-border"><div className={`h-1 w-12 rounded-full ${tone === "meter1" ? "bg-meter1" : "bg-meter2"}`} /><p className="mt-3 text-xs font-medium uppercase tracking-wider text-muted">{title}</p><p className="mt-1 font-display text-3xl font-medium tabular-nums">{units(billing)} <span className="text-base text-subtle">kWh</span></p><p className="mt-1 text-xs text-subtle tabular-nums">+ {units(carry)} kWh carry-forward from last month</p><dl className="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-4 text-sm"><div><dt className="text-xs text-muted">Daily average</dt><dd className="tabular-nums">{units(average)} <span className="text-xs font-normal text-subtle">kWh/d</span></dd><p className="mt-0.5 text-[11px] text-subtle">{units(activeDays, 1)} active days</p></div><div><dt className="text-xs text-muted">Bill to date</dt><dd className="tabular-nums">{money(bill)}</dd></div><div><dt className="text-xs text-muted">Latest reading</dt><dd className="tabular-nums">{units(current)}</dd></div><div><dt className="text-xs text-muted">Starting reading</dt><dd className="tabular-nums">{units(initial)}</dd></div></dl></article>;
+}
+
+type MeterSegment = { meter: "new" | "old"; start: number; end: number };
+
+function billingMeterSegments(inputs: ReadingInput[], billingStart: Date, billingEnd: Date, visibleEnd: Date): MeterSegment[] {
+  const end = Math.min(billingEnd.getTime(), visibleEnd.getTime());
+  const start = billingStart.getTime();
+  if (end <= start) return [];
+
+  const readings = applyCarryForward([...inputs].sort((a, b) => a.datetime - b.datetime));
+  if (!readings.length) return [];
+
+  const points = [
+    { datetime: start, ...interpolatedReadingsAt(readings, billingStart) },
+    ...readings.filter((r) => r.datetime > start && r.datetime < end),
+    { datetime: end, ...interpolatedReadingsAt(readings, new Date(end)) },
+  ].sort((a, b) => a.datetime - b.datetime);
+
+  let active: "new" | "old" | null = null;
+  const segments: MeterSegment[] = [];
+
+  const detectActive = (a: { newReading: number | null; oldReading: number | null }, b: { newReading: number | null; oldReading: number | null }) => {
+    const newDelta = a.newReading == null || b.newReading == null ? 0 : Number(b.newReading) - Number(a.newReading);
+    const oldDelta = a.oldReading == null || b.oldReading == null ? 0 : Number(b.oldReading) - Number(a.oldReading);
+    if (newDelta > 0.0001 && oldDelta <= 0.0001) return "new" as const;
+    if (oldDelta > 0.0001 && newDelta <= 0.0001) return "old" as const;
+    if (newDelta > 0.0001 && oldDelta > 0.0001) return newDelta >= oldDelta ? "new" as const : "old" as const;
+    return null;
+  };
+
+  // Establish which meter was operating at the billing boundary from the
+  // latest observed consumption before the period. This keeps the first
+  // segment correct even when the first in-period reading is only a carry.
+  let previous = readings[0];
+  for (const reading of readings) {
+    if (reading.datetime > start) break;
+    const detected = detectActive(previous, reading);
+    if (detected) active = detected;
+    previous = reading;
+  }
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    if (b.datetime <= a.datetime) continue;
+
+    const detected = detectActive(a, b);
+    if (detected) active = detected;
+    if (!active) {
+      if (a.newReading != null && a.oldReading == null) active = "new";
+      else if (a.oldReading != null && a.newReading == null) active = "old";
+    }
+    if (!active) continue;
+
+    const last = segments[segments.length - 1];
+    if (last && last.meter === active && last.end === a.datetime) {
+      last.end = b.datetime;
+    } else {
+      segments.push({ meter: active, start: a.datetime, end: b.datetime });
+    }
+  }
+
+  return segments;
 }
 
 function themeColor(name: string, fallback: string) { if (typeof document === "undefined") return fallback; const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim(); return v || fallback; }
@@ -33,6 +97,9 @@ export function SummaryView() {
   const setHourlyDay = useMonitor((s) => s.setHourlyDay);
   const hourlyDay = useMonitor((s) => s.hourlyDay);
   const hourlyOverride = useMonitor((s) => s.hourlyOverride);
+  const rawReadings = useMonitor((s) => s.readings);
+  const general = useMonitor((s) => s.general);
+  const selectedMonth = useMonitor((s) => s.selectedMonth);
   if (dashboard.empty) return <div className="rounded-2xl bg-elevated p-10 text-center shadow-border"><p className="font-display text-xl">{dashboard.message}</p></div>;
 
   const d = dashboard;
@@ -44,9 +111,17 @@ export function SummaryView() {
   const displayedBill = d.isCurrentBillingMonth ? Number(d.projectedBillActualTotal || 0) : Number(d.currentBillNew || 0) + Number(d.currentBillOld || 0);
   const effectiveRate = projectedUsage > 0 ? displayedBill / projectedUsage : 0;
   const remainingFuture = Number(d.projection?.futureTotal || 0);
+  const billingStart = selectedMonth ? new Date(Number(selectedMonth)) : getBillingPeriodStart(new Date(), general);
+  const billingEnd = addMonth(billingStart);
+  const visibleEnd = d.isCurrentBillingMonth ? new Date() : billingEnd;
+  const meterSegments = billingMeterSegments(rawReadings, billingStart, billingEnd, visibleEnd);
+  const progressStart = billingStart.getTime();
+  const progressSpan = Math.max(1, billingEnd.getTime() - progressStart);
+  const activeMeter = meterSegments.length ? meterSegments[meterSegments.length - 1].meter : null;
+  const activeMeterLabel = activeMeter === "new" ? "Meter 1" : activeMeter === "old" ? "Meter 2" : "";
 
   return <div className="space-y-5">
-    <section className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6"><div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="font-display text-3xl font-medium tracking-tight text-balance">{d.billingMonth}</h2><p className="mt-1 text-sm text-muted">{d.billingStart} → {d.billingEnd}</p><p className="mt-1 text-xs text-subtle tabular-nums">Elapsed {units(d.elapsedDays, 1)} days</p></div><p className="text-sm font-medium tabular-nums text-muted">{Number(d.billingProgress).toFixed(0)}% of period</p></div><div className="relative mt-4 h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-foreground transition-[width] duration-[var(--motion-slow)]" style={{ width: `${Math.min(100, Number(d.billingProgress)).toFixed(2)}%` }} /></div></section>
+    <section className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6"><div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="font-display text-3xl font-medium tracking-tight text-balance">{d.billingMonth}</h2><p className="mt-1 text-sm text-muted">{d.billingStart} → {d.billingEnd}</p><p className="mt-1 text-xs text-subtle tabular-nums">Elapsed {units(d.elapsedDays, 1)} days</p></div><div className="text-right"><p className="text-sm font-medium tabular-nums text-muted">{Number(d.billingProgress).toFixed(0)}% of period</p>{activeMeterLabel ? <p className="mt-0.5 text-xs text-subtle">Active: {activeMeterLabel}</p> : null}</div></div><div className="relative mt-4 h-2 overflow-hidden rounded-full bg-muted">{meterSegments.map((segment, index) => { const left = ((segment.start - progressStart) / progressSpan) * 100; const width = ((segment.end - segment.start) / progressSpan) * 100; return <div key={`${segment.start}-${segment.end}-${index}`} className={`absolute inset-y-0 ${segment.meter === "new" ? "bg-meter1" : "bg-meter2"}`} style={{ left: `${Math.max(0, Math.min(100, left))}%`, width: `${Math.max(0, Math.min(100 - left, width))}%` }} />; })}</div></section>
     <div className="grid gap-5 lg:grid-cols-3">
       <section className="rounded-2xl bg-elevated p-5 shadow-border lg:col-span-2 sm:p-6"><div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-medium uppercase tracking-wider text-muted">Total units consumed</p><p className="mt-1 font-display text-5xl font-medium tracking-tight tabular-nums sm:text-6xl">{units(displayedUsage)}<span className="ml-2 text-lg font-normal text-subtle">kWh</span></p><p className="mt-1 text-xs text-subtle tabular-nums">{units(carryForward)} kWh carry-forward from last month</p></div><div className="text-right"><p className="text-xs text-muted">Bill to date</p><p className="font-display text-2xl tabular-nums">{money(Number(d.currentBillNew || 0) + Number(d.currentBillOld || 0))}</p></div></div><div className="mt-6 grid grid-cols-2 gap-4 border-t border-border pt-5 sm:grid-cols-4"><Stat label="Last 24 hours" value={units(d.last24Total)} unit="kWh" /><Stat label="Daily average" value={units(pace.dailyAverage)} unit="kWh/d" /><Stat label="Remaining to goal" value={pace.remainingUnits > 0 ? units(pace.remainingUnits) : "Exceeded"} unit={pace.remainingUnits > 0 ? "kWh" : undefined} /><Stat label="Daily allowance" value={pace.requiredDailyAverage === "" ? pace.overGoal ? "Over" : "—" : units(pace.requiredDailyAverage)} unit={pace.requiredDailyAverage === "" ? undefined : "kWh/d"} /></div><p className="mt-4 text-pretty text-sm text-muted">{pace.overGoal ? `Combined goal exceeded by ${units(Math.abs(pace.remainingUnits))} kWh.` : `Stay at or below ${pace.requiredDailyAverage === "" ? "0" : units(pace.requiredDailyAverage)} kWh/d to finish on target.`}</p></section>
       <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-1"><MeterCard title="Meter 1" tone="meter1" billing={d.billingNew} carry={d.carryForwardNew} average={d.averageNew === "" ? "" : Number(d.averageNew)} activeDays={d.activeDaysNew} bill={d.currentBillNew} current={d.currentNew} initial={d.initialNew} /><MeterCard title="Meter 2" tone="meter2" billing={d.billingOld} carry={d.carryForwardOld} average={d.averageOld === "" ? "" : Number(d.averageOld)} activeDays={d.activeDaysOld} bill={d.currentBillOld} current={d.currentOld} initial={d.initialOld} /></div>
