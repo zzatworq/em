@@ -18,8 +18,7 @@ function fallbackBilledReading(c: Collection): number {
  *
  * The first collection keeps its stored starting baseline. Every later
  * collection starts from the previous collection's billed/adjusted reading,
- * not from the previous raw meter reading. This is the reading that should be
- * carried into the next utility billing cycle.
+ * not from the previous raw meter reading.
  */
 export function rebuildCollectionChain(collections: Collection[]): Collection[] {
   const result = [...collections];
@@ -73,9 +72,15 @@ export function collectionHistory(collections: Collection[]): HistoryRow[] {
   });
 }
 
+/**
+ * Keep manually seeded/imported history rows, but replace every row generated
+ * from collection data on every synchronization. This is deliberately based
+ * on the generated ID prefix rather than month/meter, because a collection
+ * can be edited to a different date/month or deleted entirely.
+ */
 export function syncCollectionHistory(history: HistoryRow[], collections: Collection[]): HistoryRow[] {
-  const chained = rebuildCollectionChain(collections);
-  const generated = collectionHistory(chained);
-  const generatedKeys = new Set(generated.map((h) => `${h.meter}|${h.month}`));
-  return [...history.filter((h) => !generatedKeys.has(`${h.meter}|${h.month}`)), ...generated];
+  const generated = collectionHistory(collections);
+  const generatedHistoryIds = new Set(generated.map((h) => h.id));
+  const manualOrLegacy = history.filter((h) => !h.id.startsWith("collection-history-") && !generatedHistoryIds.has(h.id));
+  return [...manualOrLegacy, ...generated];
 }
