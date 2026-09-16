@@ -80,6 +80,7 @@ export type HistoryRow = {
   meter: MeterId;
   status: string;
   units: number;
+  reading?: number;
   bill: number;
   payment: number;
 };
