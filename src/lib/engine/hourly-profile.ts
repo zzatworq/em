@@ -26,11 +26,11 @@ export function getHourlyDistributionProfile(
   }
 
   const weighted = Array.from({ length: 24 }, () => 0);
+  const labels = Array.from({ length: 24 }, () => ({ hour: 0, minute: 0 }));
   let totalWeight = 0;
 
   for (const key of [...dayKeys].sort((a, b) => a - b)) {
     const dayStart = new Date(key);
-    const dayEnd = new Date(key + DAY_MS);
     const dayReadings = inputs.filter((r) => r.datetime >= key && r.datetime < key + DAY_MS);
     if (!dayReadings.length) continue;
 
@@ -38,6 +38,9 @@ export function getHourlyDistributionProfile(
     let total = 0;
     let cursor = new Date(dayStart);
     for (let hour = 0; hour < 24; hour++) {
+      if (hour === 0) {
+        labels[hour] = { hour: cursor.getHours(), minute: cursor.getMinutes() };
+      }
       const next = new Date(cursor);
       next.setHours(next.getHours() + 1);
       const newDelta = calculateDifference(
@@ -63,8 +66,9 @@ export function getHourlyDistributionProfile(
   if (!(totalWeight > 0)) return [];
   const fractions = weighted.map((value) => value / totalWeight);
   const fractionSum = fractions.reduce((a, b) => a + b, 0);
-  return fractions.map((fraction, hour) => ({
-    hour,
+  return fractions.map((fraction, index) => ({
+    hour: labels[index].hour,
+    minute: labels[index].minute,
     fraction: fractionSum > 0 ? fraction / fractionSum : 0,
     percent: fractionSum > 0 ? (fraction / fractionSum) * 100 : 0,
   }));
