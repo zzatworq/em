@@ -1,4 +1,4 @@
-import type { CarriedReading, GeneralSettings, HourlyProfilePoint, ReadingInput } from "./types";
+import type { GeneralSettings, HourlyProfilePoint, ReadingInput } from "./types";
 import { calculateDifference, estimateReadingAt, applyCarryForward } from "./readings";
 import { getFivePmDayStart } from "./time";
 
@@ -38,9 +38,7 @@ export function getHourlyDistributionProfile(
     let total = 0;
     let cursor = new Date(dayStart);
     for (let hour = 0; hour < 24; hour++) {
-      if (hour === 0) {
-        labels[hour] = { hour: cursor.getHours(), minute: cursor.getMinutes() };
-      }
+      labels[hour] = { hour: cursor.getHours(), minute: cursor.getMinutes() };
       const next = new Date(cursor);
       next.setHours(next.getHours() + 1);
       const newDelta = calculateDifference(
