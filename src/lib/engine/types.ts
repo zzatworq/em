@@ -134,6 +134,7 @@ export type HourlyPoint = {
 
 export type HourlyProfilePoint = {
   hour: number;
+  minute: number;
   fraction: number;
   percent: number;
 };
