@@ -35,10 +35,6 @@ export function calculateMeterBill(rawUnits: number, tariff: Tariff): MeterBill 
 
   const activeSlabs =
     tariff.consumerType === "Protected" ? tariff.protectedSlabs : tariff.slabs;
-  // Default to the cheapest slab, not the most expensive one. Consumption
-  // below the first slab's `min` (e.g. 0.5 units when the first slab starts
-  // at 1) would otherwise fall through the loop below and silently bill at
-  // the top rate instead of the bottom one.
   let slab = activeSlabs[0];
   for (const s of activeSlabs) {
     if (units >= s.min && units <= s.max) {
@@ -53,8 +49,7 @@ export function calculateMeterBill(rawUnits: number, tariff: Tariff): MeterBill 
     let remaining = units;
     for (const s of activeSlabs) {
       if (remaining <= 0) break;
-      const width =
-        s.max === Infinity ? remaining : Math.min(remaining, Math.max(0, s.max - s.min + 1));
+      const width = s.max === Infinity ? remaining : Math.min(remaining, Math.max(0, s.max - s.min + 1));
       if (width <= 0) continue;
       const amount = width * s.rate;
       energy += amount;
@@ -81,11 +76,7 @@ export function calculateMeterBill(rawUnits: number, tariff: Tariff): MeterBill 
     amount: fixed,
   });
 
-  const perUnit =
-    tariff.adjustments.FCA +
-    tariff.adjustments.QTA +
-    tariff.adjustments.FC +
-    tariff.adjustments.NJ;
+  const perUnit = tariff.adjustments.FCA + tariff.adjustments.QTA + tariff.adjustments.FC + tariff.adjustments.NJ;
   const adjustmentAmount = units * perUnit;
   if (perUnit !== 0) {
     steps.push({
@@ -97,11 +88,7 @@ export function calculateMeterBill(rawUnits: number, tariff: Tariff): MeterBill 
 
   const otherFixed = tariff.adjustments.OtherFixed;
   if (otherFixed !== 0) {
-    steps.push({
-      label: "Other fixed",
-      formula: `Rs ${fmtMoney(otherFixed)}`,
-      amount: otherFixed,
-    });
+    steps.push({ label: "Other fixed", formula: `Rs ${fmtMoney(otherFixed)}`, amount: otherFixed });
   }
 
   const taxableBase = energy + fixed + adjustmentAmount + otherFixed;
@@ -124,20 +111,11 @@ export function calculateMeterBill(rawUnits: number, tariff: Tariff): MeterBill 
     });
   }
   if (tv !== 0) {
-    steps.push({
-      label: "TV fee",
-      formula: `Rs ${fmtMoney(tv)}`,
-      amount: tv,
-    });
+    steps.push({ label: "TV fee", formula: `Rs ${fmtMoney(tv)}`, amount: tv });
   }
 
   const total = energy + fixed + adjustmentAmount + duty + gst + tv + otherFixed;
-  steps.push({
-    label: "Estimated bill",
-    formula: `All charges above = Rs ${fmtMoney(total)}`,
-    amount: total,
-    total: true,
-  });
+  steps.push({ label: "Estimated bill", formula: `All charges above = Rs ${fmtMoney(total)}`, amount: total, total: true });
 
   return {
     units,
@@ -162,10 +140,12 @@ export function calculateProRata(
   standardDays: number,
 ) {
   if (baseline == null || present == null) return null;
+
   const actual = Number(present) - Number(baseline);
-  const days = Math.round(Number(extendedDays || 0));
-  const standard = Math.round(Number(standardDays || 0));
-  if (!isFinite(actual) || days <= 0 || standard <= 0 || actual < 0) return null;
+  const days = Number(extendedDays);
+  const standard = Number(standardDays);
+  if (!isFinite(actual) || !isFinite(days) || !isFinite(standard) || days <= 0 || standard <= 0 || actual < 0) return null;
+
   const daily = actual / days;
   const billed = Math.floor(daily * standard);
   return {
