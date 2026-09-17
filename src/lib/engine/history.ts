@@ -7,8 +7,8 @@ function collectionTime(c: Collection): number {
 }
 
 function fallbackBilledReading(c: Collection): number {
-  const standardDays = Math.round(c.standardDays || 30);
-  const extendedDays = Math.round(c.extendedDays || standardDays);
+  const standardDays = Number(c.standardDays || 30);
+  const extendedDays = Number(c.extendedDays || standardDays);
   const audit = calculateProRata(c.previousBaseline, c.rawReading, extendedDays, standardDays);
   return audit?.adjustedPresent ?? c.previousBaseline;
 }
@@ -30,11 +30,12 @@ export function rebuildCollectionChain(collections: Collection[]): Collection[] 
     let billedBaseline: number | null = null;
     for (const row of rows) {
       const baseline = billedBaseline == null ? Number(row.previousBaseline) : billedBaseline;
-      const standardDays = Math.round(row.standardDays || 30);
-      const extendedDays = Math.round(row.extendedDays || standardDays);
+      const standardDays = Number(row.standardDays || 30);
+      const extendedDays = Number(row.extendedDays || standardDays);
       const audit = calculateProRata(baseline, Number(row.rawReading), extendedDays, standardDays);
       const index = result.findIndex((c) => c.id === row.id);
       if (index < 0) continue;
+
       if (audit) {
         result[index] = {
           ...row,
@@ -89,7 +90,6 @@ function backfillHistoricalReadings(history: HistoryRow[]): HistoryRow[] {
     const readings = new Map<number, number>();
     readings.set(rows[anchorIndex].index, anchors[meter].reading);
 
-    // Work backward: previous reading = next reading - next month's units.
     let reading = anchors[meter].reading;
     for (let i = anchorIndex - 1; i >= 0; i--) {
       reading -= Number(rows[i + 1].row.units) || 0;
@@ -107,8 +107,8 @@ function backfillHistoricalReadings(history: HistoryRow[]): HistoryRow[] {
 export function collectionHistory(collections: Collection[]): HistoryRow[] {
   const chained = rebuildCollectionChain(collections);
   return chained.map((c) => {
-    const standardDays = Math.round(c.standardDays || 30);
-    const extendedDays = Math.round(c.extendedDays || standardDays);
+    const standardDays = Number(c.standardDays || 30);
+    const extendedDays = Number(c.extendedDays || standardDays);
     const actualUnits = c.rawReading - c.previousBaseline;
     const billedUnits = Math.max(0, Math.floor((extendedDays > 0 ? actualUnits / extendedDays : 0) * standardDays));
     return {
@@ -126,9 +126,7 @@ export function collectionHistory(collections: Collection[]): HistoryRow[] {
 
 /**
  * Keep manually seeded/imported history rows, but replace every row generated
- * from collection data on every synchronization. This is deliberately based
- * on the generated ID prefix rather than month/meter, because a collection
- * can be edited to a different date/month or deleted entirely.
+ * from collection data on every synchronization.
  */
 export function syncCollectionHistory(history: HistoryRow[], collections: Collection[]): HistoryRow[] {
   const generated = collectionHistory(collections);
