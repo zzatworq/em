@@ -80,6 +80,7 @@ export function HistoryView() {
   const [payment, setPayment] = useState("");
   const [collectionOpen, setCollectionOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [roundUpInterval, setRoundUpInterval] = useState(false);
 
   const calculated = useMemo(() => {
     const current = localDateTime(date, time);
@@ -115,7 +116,8 @@ export function HistoryView() {
     const previousReading = previousHistory?.reading;
     const hasPreviousReading = previousReading != null && Number.isFinite(Number(previousReading));
     const standardDays = periodEnd ? billingPeriodLengthDays(periodEnd) : 0;
-    const extendedDays = periodStart && validCurrent ? (current.getTime() - periodStart.getTime()) / DAY_MS : 0;
+    const rawExtendedDays = periodStart && validCurrent ? (current.getTime() - periodStart.getTime()) / DAY_MS : 0;
+    const extendedDays = roundUpInterval && rawExtendedDays > 0 ? Math.ceil(rawExtendedDays) : rawExtendedDays;
     const audit = hasPreviousReading && Number.isFinite(Number(raw))
       ? calculateProRata(Number(previousReading), Number(raw), extendedDays, standardDays)
       : null;
@@ -132,7 +134,7 @@ export function HistoryView() {
       audit,
       hasPreviousReading,
     };
-  }, [date, time, meter, raw, history, general.billingDay, general.billingHour, general.billingMinute]);
+  }, [date, time, meter, raw, history, general.billingDay, general.billingHour, general.billingMinute, roundUpInterval]);
 
   const readingEntered = raw.trim() !== "" && Number.isFinite(Number(raw));
   const readingNonNegative = readingEntered && Number(raw) >= 0;
@@ -148,6 +150,7 @@ export function HistoryView() {
     setStatus("EX");
     setBill("");
     setPayment("");
+    setRoundUpInterval(false);
     setCollectionOpen(true);
   }
 
@@ -160,6 +163,7 @@ export function HistoryView() {
     setStatus(collection.status || "EX");
     setBill(collection.bill == null ? "" : String(collection.bill));
     setPayment(collection.payment == null ? "" : String(collection.payment));
+    setRoundUpInterval(false);
     setCollectionOpen(true);
   }
 
@@ -284,7 +288,14 @@ export function HistoryView() {
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <div className="rounded-lg bg-black/10 p-3"><p className="text-xs text-muted">Billing period</p><p className="mt-1 font-medium">{calculated.month || "—"}</p></div>
-                  <div className="rounded-lg bg-black/10 p-3"><p className="text-xs text-muted">Actual interval</p><p className="mt-1 font-medium tabular-nums">{calculated.extendedDays > 0 ? `${calculated.extendedDays.toFixed(2)} days` : "—"}</p></div>
+                  <div className="rounded-lg bg-black/10 p-3">
+                    <p className="text-xs text-muted">Actual interval</p>
+                    <p className="mt-1 font-medium tabular-nums">{calculated.extendedDays > 0 ? `${calculated.extendedDays.toFixed(2)} days` : "—"}</p>
+                    <label className="mt-2 flex items-center gap-1.5 text-xs text-muted">
+                      <input type="checkbox" checked={roundUpInterval} onChange={(event) => setRoundUpInterval(event.target.checked)} className="size-3.5 rounded border-border" />
+                      Round up to whole days
+                    </label>
+                  </div>
                   <div className="rounded-lg bg-black/10 p-3"><p className="text-xs text-muted">Standard cycle</p><p className="mt-1 font-medium tabular-nums">{calculated.standardDays > 0 ? `${calculated.standardDays.toFixed(0)} days` : "—"}</p></div>
                   <div className="rounded-lg bg-black/10 p-3"><p className="text-xs text-muted">Actual units</p><p className="mt-1 font-medium tabular-nums">{calculated.audit ? units(calculated.audit.actualUnits) : "—"}</p></div>
                 </div>
