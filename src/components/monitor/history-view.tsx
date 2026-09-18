@@ -83,6 +83,7 @@ export function HistoryView() {
   const addCollection = useMonitor((s) => s.addCollection);
   const updateCollection = useMonitor((s) => s.updateCollection);
   const deleteCollection = useMonitor((s) => s.deleteCollection);
+  const fixMeter2LegacyReadings = useMonitor((s) => s.fixMeter2LegacyReadings);
 
   const now = new Date();
   const [meter, setMeter] = useState<MeterId>("METER 1");
@@ -357,9 +358,14 @@ export function HistoryView() {
       ) : null}
 
       <section className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
-        <div>
-          <h2 className="font-display text-2xl font-medium">Bill history</h2>
-          <p className="mt-1 text-sm text-muted">The Reading column is the billing reading produced by the pro-rata adjustment and becomes the reference for the following month.</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="font-display text-2xl font-medium">Bill history</h2>
+            <p className="mt-1 text-sm text-muted">The Reading column is the billing reading produced by the pro-rata adjustment and becomes the reference for the following month.</p>
+          </div>
+          {/* TEMPORARY — remove this button and fixMeter2LegacyReadings once run. One-time
+              patch for already-persisted Meter 2 readings that were 1000 units too high. */}
+          <Button type="button" size="sm" variant="ghost" onClick={() => { if (window.confirm("Apply the one-time -1000 correction to Meter 2's Jul 25 – Jul 26 readings?")) fixMeter2LegacyReadings(); }}>Fix Meter 2 readings (one-time)</Button>
         </div>
         <div className="mt-6 grid gap-8 lg:grid-cols-2">
           <HistoryTable title="Meter 1" rows={history.filter((row) => row.meter === "METER 1")} />
