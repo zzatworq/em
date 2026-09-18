@@ -14,7 +14,33 @@ export const useMonitor = create<State>()((set, get) => ({
   ...empty(), tab: "summary", selectedMonth: null, assume5050: false, hourlyDay: "last24", hourlyOverride: null, hydrated: false, dirty: false,
   setTab: (tab) => set({ tab }), setMonth: (value) => set({ selectedMonth: value, hourlyOverride: null }), setAssume5050: (assume5050) => set({ assume5050 }),
   setHourlyDay: (hourlyDay) => { const s = get(); set({ hourlyDay, hourlyOverride: hourlyForDay(s.readings, hourlyDay, new Date(), s.general) }); },
-  replaceData: (data) => { const collections = rebuildCollectionChain(data.collections ?? []); set({ ...data, collections, history: syncCollectionHistory(data.history ?? [], collections), hydrated: true, dirty: false, selectedMonth: null, hourlyOverride: null }); },
+  replaceData: (data) => {
+    const collections = rebuildCollectionChain(data.collections ?? []);
+    const OLD_TO_NEW: Record<string, [number, number]> = {
+      "Jul 25": [4788, 3788], "Aug 25": [4910, 3910], "Sep 25": [5004, 4004], "Oct 25": [5108, 4108],
+      "Nov 25": [5194, 4194], "Dec 25": [5244, 4244], "Jan 26": [5315, 4315], "Feb 26": [5356, 4356],
+      "Mar 26": [5379, 4379], "Apr 26": [5416, 4416], "May 26": [5480, 4480], "Jun 26": [5645, 4645],
+      "Jul 26": [5854, 4854],
+    };
+    let corrected = false;
+    const correctedHistory = (data.history ?? []).map((row) => {
+      const entry = row.meter === "METER 2" ? OLD_TO_NEW[row.month] : undefined;
+      if (entry && Number(row.reading) === entry[0]) {
+        corrected = true;
+        return { ...row, reading: entry[1] };
+      }
+      return row;
+    });
+    set({
+      ...data,
+      collections,
+      history: syncCollectionHistory(correctedHistory, collections),
+      hydrated: true,
+      dirty: corrected,
+      selectedMonth: null,
+      hourlyOverride: null,
+    });
+  },
   markDirty: () => set({ dirty: true }), markSaved: () => set({ dirty: false }),
   addReading: (r) => set({ readings: [...get().readings, { ...r, id: uid("r") }], dirty: true }),
   updateReading: (id, r) => set({ readings: get().readings.map((x) => x.id === id ? { ...x, ...r } : x), dirty: true }),
