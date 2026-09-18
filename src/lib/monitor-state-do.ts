@@ -59,21 +59,40 @@ export class MonitorState extends DurableObject {
         body.imageBase64,
         Date.now(),
       );
+      this.ctx.storage.sql.exec(
+        `DELETE FROM meter_images
+         WHERE id IN (
+           SELECT id FROM meter_images
+           ORDER BY created_at DESC
+           LIMIT -1 OFFSET 1000
+         )`,
+      );
       return Response.json({ ok: true });
     }
 
     if (url.pathname === "/images/references" && method === "GET") {
       const limit = Math.max(1, Math.min(5, Number(url.searchParams.get("limit") ?? "3")));
-      const rows = this.ctx.storage.sql
+      const meter1 = this.ctx.storage.sql
         .exec(
           `SELECT id, meter, value, identity, image_base64 AS imageBase64
            FROM meter_images
+           WHERE meter = 'm1'
            ORDER BY created_at DESC
            LIMIT ?`,
-          limit * 2,
+          limit,
         )
         .toArray();
-      return Response.json({ images: rows });
+      const meter2 = this.ctx.storage.sql
+        .exec(
+          `SELECT id, meter, value, identity, image_base64 AS imageBase64
+           FROM meter_images
+           WHERE meter = 'm2'
+           ORDER BY created_at DESC
+           LIMIT ?`,
+          limit,
+        )
+        .toArray();
+      return Response.json({ images: [...meter1, ...meter2] });
     }
 
     if (url.pathname === "/images/identities" && method === "GET") {
