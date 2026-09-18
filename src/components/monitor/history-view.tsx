@@ -53,8 +53,8 @@ function HistoryTable({ title, rows }: { title: string; rows: HistoryRow[] }) {
             <tr className="text-left text-xs uppercase tracking-wider text-muted">
               <th className="pb-2 pr-3 font-medium">Month</th>
               <th className="pb-2 px-2 text-center font-medium">Status</th>
-              <th className="pb-2 px-2 text-right font-medium">Billed units</th>
               <th className="pb-2 px-2 text-right font-medium">Reading</th>
+              <th className="pb-2 px-2 text-right font-medium">Billed units</th>
               <th className="pb-2 pl-2 text-right font-medium">Bill</th>
             </tr>
           </thead>
@@ -63,8 +63,8 @@ function HistoryTable({ title, rows }: { title: string; rows: HistoryRow[] }) {
               <tr key={row.id} className="border-t border-border">
                 <td className="py-2.5 pr-3">{row.month}</td>
                 <td className="py-2.5 px-2 text-center text-xs text-muted">{row.status}</td>
+                <td className="py-2.5 px-2 text-right tabular-nums">{row.reading == null ? "—" : units(row.reading, 0)}</td>
                 <td className="py-2.5 px-2 text-right tabular-nums">{units(row.units, 0)}</td>
-                <td className="py-2.5 px-2 text-right tabular-nums">{row.reading == null ? "—" : units(row.reading, 2)}</td>
                 <td className="py-2.5 pl-2 text-right tabular-nums">{money(row.bill)}</td>
               </tr>
             ))}
