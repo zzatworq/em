@@ -38,7 +38,7 @@ function toDecimalValue(digits: string | null): number | null {
 }
 
 export const extractMeterReading = createServerFn({ method: "POST" })
-  .validator((data: { imageBase64: string; mimeType?: string }) => data)
+  .validator((data: { imageBase64: string; mimeType?: string; knownIdentities?: Array<{ meter: "m1" | "m2"; identity: string }> }) => data)
   .handler(async ({ data }): Promise<MeterReadingResult> => {
     const apiKey = env.GEMINI_ANTHROPIC_API_KEY;
     if (!apiKey) {
@@ -58,7 +58,7 @@ export const extractMeterReading = createServerFn({ method: "POST" })
           contents: [{
             role: "user",
             parts: [
-              { text: "Detect the physical meter and its numeric display. Locate the display, estimate the correction rotation, and read every digit." },
+              { text: `Detect the physical meter and its numeric display. Locate the display, estimate the correction rotation, and read every digit. If known meter identities are supplied below, compare any visible serial/meter/model text in the photo against them and return the matching physical meter identity when there is a clear match. Known identities: ${(data.knownIdentities ?? []).map((x) => `${x.meter}: ${x.identity}`).join(" | ") || "none"}` },
               { inlineData: { mimeType, data: data.imageBase64 } },
             ],
           }],
