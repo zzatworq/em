@@ -145,6 +145,17 @@ export function HistoryView() {
       ? calculateProRata(Number(previousReading), Number(raw), extendedDays, standardDays)
       : null;
 
+    // Use the same carry-forward calculation shown in Collection Data:
+    // interpolated meter reading at the billing boundary minus the
+    // pro-rata billing reading.
+    const boundaryAt = periodEnd ? interpolatedReadingsAt(carriedReadings, periodEnd) : null;
+    const boundaryReading = boundaryAt
+      ? (meter === "METER 1" ? boundaryAt.newReading : boundaryAt.oldReading)
+      : null;
+    const carryForward = audit && boundaryReading != null && Number.isFinite(Number(boundaryReading))
+      ? Number(boundaryReading) - audit.adjustedPresent
+      : audit?.carryForward ?? null;
+
     return {
       current,
       periodStart,
@@ -155,9 +166,11 @@ export function HistoryView() {
       standardDays,
       extendedDays,
       audit,
+      boundaryReading,
+      carryForward,
       hasPreviousReading,
     };
-  }, [date, time, meter, raw, history, general.billingDay, general.billingHour, general.billingMinute, roundUpInterval]);
+  }, [date, time, meter, raw, history, carriedReadings, general.billingDay, general.billingHour, general.billingMinute, roundUpInterval]);
 
   const readingEntered = raw.trim() !== "" && Number.isFinite(Number(raw));
   const readingNonNegative = readingEntered && Number(raw) >= 0;
@@ -327,6 +340,7 @@ export function HistoryView() {
                     <div><p className="text-xs text-muted">Daily average</p><p className="mt-1 tabular-nums">{units(calculated.audit.dailyAverage)} kWh/day</p></div>
                     <div><p className="text-xs text-muted">Billed units</p><p className="mt-1 font-medium tabular-nums">{units(calculated.audit.billedUnits, 0)} kWh</p></div>
                     <div><p className="text-xs text-muted">New billing reading</p><p className="mt-1 font-medium tabular-nums">{units(calculated.audit.adjustedPresent)}</p></div>
+                    <div><p className="text-xs text-muted">Carry-forward</p><p className="mt-1 font-medium tabular-nums">{calculated.carryForward == null ? "—" : units(calculated.carryForward)}</p></div>
                   </div>
                 ) : null}
               </section>
