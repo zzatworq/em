@@ -340,6 +340,7 @@ export function HistoryView() {
                     <div><p className="text-xs text-muted">Daily average</p><p className="mt-1 tabular-nums">{units(calculated.audit.dailyAverage)} kWh/day</p></div>
                     <div><p className="text-xs text-muted">Billed units</p><p className="mt-1 font-medium tabular-nums">{units(calculated.audit.billedUnits, 0)} kWh</p></div>
                     <div><p className="text-xs text-muted">New billing reading</p><p className="mt-1 font-medium tabular-nums">{units(calculated.audit.adjustedPresent)}</p></div>
+                    <div><p className="text-xs text-muted">Billing-boundary reading</p><p className="mt-1 font-medium tabular-nums">{calculated.boundaryReading == null ? "—" : units(calculated.boundaryReading)}</p></div>
                     <div><p className="text-xs text-muted">Carry-forward</p><p className="mt-1 font-medium tabular-nums">{calculated.carryForward == null ? "—" : units(calculated.carryForward)}</p></div>
                   </div>
                 ) : null}
