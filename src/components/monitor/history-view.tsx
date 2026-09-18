@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { calculateProRata } from "@/lib/engine/bill";
 import { addMonth, billingPeriodLengthDays, formatBillingMonth, money, units } from "@/lib/engine/time";
+import { applyCarryForward, interpolatedReadingsAt } from "@/lib/engine/readings";
 import { useMonitor } from "@/store/monitor";
 import type { Collection, HistoryRow, MeterId } from "@/lib/engine/types";
 
@@ -24,6 +25,18 @@ function historyMonthKey(month: string): number | null {
   if (index < 0) return null;
   const year = Number(match[2].length === 2 ? `20${match[2]}` : match[2]);
   return year * 12 + index;
+}
+
+// Rebuilds the exact billing-period-end boundary (Date) that a saved
+// collection's "month" label refers to, so the boundary reading can be
+// looked up in the raw readings log for carry-forward purposes.
+function billingMonthEndBoundary(month: string, gs: { billingDay: number; billingHour: number; billingMinute: number }): Date | null {
+  const match = month.trim().match(/^([A-Za-z]{3,9})\s+(\d{2}|\d{4})$/);
+  if (!match) return null;
+  const index = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(match[1].slice(0, 3).toLowerCase());
+  if (index < 0) return null;
+  const year = Number(match[2].length === 2 ? `20${match[2]}` : match[2]);
+  return new Date(year, index, gs.billingDay, gs.billingHour, gs.billingMinute, 0, 0);
 }
 
 function HistoryTable({ title, rows }: { title: string; rows: HistoryRow[] }) {
@@ -66,6 +79,7 @@ export function HistoryView() {
   const history = useMonitor((s) => s.history);
   const collections = useMonitor((s) => s.collections);
   const general = useMonitor((s) => s.general);
+  const rawReadings = useMonitor((s) => s.readings);
   const addCollection = useMonitor((s) => s.addCollection);
   const updateCollection = useMonitor((s) => s.updateCollection);
   const deleteCollection = useMonitor((s) => s.deleteCollection);
@@ -81,6 +95,14 @@ export function HistoryView() {
   const [collectionOpen, setCollectionOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [roundUpInterval, setRoundUpInterval] = useState(false);
+
+  // Sorted + carry-forward-filled readings log, used to look up the actual
+  // logged meter reading at a billing period's end boundary (for carry-forward),
+  // rather than relying on whatever value happened to be collected that day.
+  const carriedReadings = useMemo(
+    () => applyCarryForward([...rawReadings].sort((a, b) => a.datetime - b.datetime)),
+    [rawReadings],
+  );
 
   const calculated = useMemo(() => {
     const current = localDateTime(date, time);
@@ -353,6 +375,12 @@ export function HistoryView() {
         <div className="space-y-3">
           {collections.length === 0 ? <p className="text-sm text-muted">No collection entries yet.</p> : [...collections].sort((a, b) => localDateTime(b.date, b.time).getTime() - localDateTime(a.date, a.time).getTime()).map((collection) => {
             const audit = calculateProRata(collection.previousBaseline, collection.rawReading, collection.extendedDays || 0, collection.standardDays || 0);
+            const boundary = billingMonthEndBoundary(collection.month, general);
+            const boundaryAt = boundary ? interpolatedReadingsAt(carriedReadings, boundary) : null;
+            const boundaryReading = boundaryAt ? (collection.meter === "METER 1" ? boundaryAt.newReading : boundaryAt.oldReading) : null;
+            const carryForward = audit && boundaryReading != null && Number.isFinite(Number(boundaryReading))
+              ? Number(boundaryReading) - audit.adjustedPresent
+              : audit?.carryForward ?? null;
             return (
               <article key={collection.id} className="rounded-xl border border-border p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -367,7 +395,7 @@ export function HistoryView() {
                     <div><dt className="text-xs text-muted">Actual interval</dt><dd className="tabular-nums">{audit.extendedDays.toFixed(2)}d</dd></div>
                     <div><dt className="text-xs text-muted">Billed units</dt><dd className="font-medium tabular-nums">{units(audit.billedUnits, 0)}</dd></div>
                     <div><dt className="text-xs text-muted">Billing reading</dt><dd className="font-medium tabular-nums">{units(audit.adjustedPresent)}</dd></div>
-                    <div><dt className="text-xs text-muted">Carry-forward</dt><dd className="tabular-nums">{units(audit.carryForward)}</dd></div>
+                    <div><dt className="text-xs text-muted">Carry-forward</dt><dd className="tabular-nums">{units(carryForward)}</dd></div>
                   </dl>
                 ) : <p className="mt-3 text-sm text-muted">This record cannot currently be recalculated because its stored pro-rata interval or baseline is invalid.</p>}
               </article>
