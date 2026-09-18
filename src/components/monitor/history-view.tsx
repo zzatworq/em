@@ -84,15 +84,22 @@ export function HistoryView() {
   const calculated = useMemo(() => {
     const current = localDateTime(date, time);
     const validCurrent = Number.isFinite(current.getTime());
-    const periodStart = validCurrent
+
+    // A collection belongs to the calendar month in which the bill is being
+    // collected. The configured billing boundary inside that month is the
+    // period end; the immediately preceding boundary starts the consumption
+    // interval used for pro-rata.
+    const periodEnd = validCurrent
       ? new Date(current.getFullYear(), current.getMonth(), general.billingDay, general.billingHour, general.billingMinute, 0, 0)
       : null;
+    const periodStart = periodEnd
+      ? new Date(periodEnd.getTime())
+      : null;
 
-    if (periodStart && current < periodStart) {
+    if (periodStart) {
       periodStart.setMonth(periodStart.getMonth() - 1);
     }
 
-    const periodEnd = periodStart ? addMonth(periodStart) : null;
     const month = periodEnd ? formatBillingMonth(periodEnd) : "";
     const monthKey = historyMonthKey(month);
     const previousMonthKey = monthKey == null ? null : monthKey - 1;
