@@ -74,7 +74,7 @@ function monthKey(month: string): number {
 function backfillHistoricalReadings(history: HistoryRow[]): HistoryRow[] {
   const anchors: Record<MeterId, { month: string; reading: number }> = {
     "METER 1": { month: "Jul 26", reading: 2435 },
-    "METER 2": { month: "Jul 26", reading: 5854 },
+    "METER 2": { month: "Jul 26", reading: 4854 },
   };
 
   return (["METER 1", "METER 2"] as const).flatMap((meter) => {
