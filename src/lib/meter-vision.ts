@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { env } from "cloudflare:workers";
 
 const METER_SYSTEM_PROMPT = `You inspect utility meter photographs. Respond with ONLY compact JSON, with no markdown fences or commentary:
-{"meterDetected":true|false,"displayDetected":true|false,"digits":"digits only or null","label":"visible meter brand/model or null","identity":"visible serial/model/label text useful for distinguishing this physical meter, or null","confidence":"high|medium|low","rotation":0,"crop":{"x":0,"y":0,"width":0,"height":0}|null}
+{"meterDetected":true|false,"displayDetected":true|false,"digits":"digits only or null","label":"visible meter brand/model or null","identity":"visible serial/model/label text useful for distinguishing this physical meter, or null","matchedMeter":"m1|m2|null","confidence":"high|medium|low","rotation":0,"crop":{"x":0,"y":0,"width":0,"height":0}|null}
 Image coordinates are percentages (0-100) of the full image. crop must tightly cover the complete numeric reading display, including all reading digits but as little surrounding area as practical. rotation is the clockwise angle in degrees needed to make the display upright after cropping; normally between -45 and 45. If the display is already upright use 0. If you cannot locate the display, crop is null and rotation is 0. Read every visible digit exactly. The final two digits are decimal digits. identity should contain any visible serial number, meter number, model number, or distinctive printed label that can distinguish this physical meter from another meter.`;
 
 export type MeterReadingResult = {
@@ -11,6 +11,7 @@ export type MeterReadingResult = {
   digits: string | null;
   label: string | null;
   identity: string | null;
+  matchedMeter: "m1" | "m2" | null;
   confidence: "high" | "medium" | "low";
   value: number | null;
   rotation: number;
@@ -38,7 +39,7 @@ function toDecimalValue(digits: string | null): number | null {
 }
 
 export const extractMeterReading = createServerFn({ method: "POST" })
-  .validator((data: { imageBase64: string; mimeType?: string; knownIdentities?: Array<{ meter: "m1" | "m2"; identity: string }> }) => data)
+  .validator((data: { imageBase64: string; mimeType?: string; knownIdentities?: Array<{ meter: "m1" | "m2"; identity: string }>; knownReferences?: Array<{ meter: "m1" | "m2"; imageBase64: string }> }) => data)
   .handler(async ({ data }): Promise<MeterReadingResult> => {
     const apiKey = env.GEMINI_ANTHROPIC_API_KEY;
     if (!apiKey) {
@@ -52,21 +53,25 @@ export const extractMeterReading = createServerFn({ method: "POST" })
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: METER_SYSTEM_PROMPT }],
-          },
-          contents: [{
-            role: "user",
-            parts: [
-              { text: `Detect the physical meter and its numeric display. Locate the display, estimate the correction rotation, and read every digit. If known meter identities are supplied below, compare any visible serial/meter/model text in the photo against them and return the matching physical meter identity when there is a clear match. Known identities: ${(data.knownIdentities ?? []).map((x) => `${x.meter}: ${x.identity}`).join(" | ") || "none"}` },
-              { inlineData: { mimeType, data: data.imageBase64 } },
-            ],
-          }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0,
-          },
-        }),
+        systemInstruction: {
+          parts: [{ text: METER_SYSTEM_PROMPT }],
+        },
+        contents: [{
+          role: "user",
+          parts: [
+            { text: `The first image is the current meter photo. Detect the physical meter and its numeric display. Locate the display, estimate the correction rotation, and read every digit. If reference images are supplied after the current image, compare the physical meter/display appearance against them and set matchedMeter only when the match is clear. If known meter identities are supplied, compare visible serial/meter/model text against them too. Known identities: ${(data.knownIdentities ?? []).map((x) => `${x.meter}: ${x.identity}`).join(" | ") || "none"}` },
+            { inlineData: { mimeType, data: data.imageBase64 } },
+            ...(data.knownReferences ?? []).map((ref) => [
+              { text: `Reference image for ${ref.meter}` },
+              { inlineData: { mimeType: "image/jpeg", data: ref.imageBase64 } },
+            ]).flat(),
+          ],
+        }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0,
+        },
+      }),
       },
     );
 
@@ -120,6 +125,7 @@ export const extractMeterReading = createServerFn({ method: "POST" })
       digits,
       label: typeof result.label === "string" ? result.label : null,
       identity: typeof result.identity === "string" ? result.identity : null,
+      matchedMeter: result.matchedMeter === "m1" || result.matchedMeter === "m2" ? result.matchedMeter : null,
       confidence: result.confidence === "high" || result.confidence === "low" ? result.confidence : "medium",
       value: toDecimalValue(digits),
       rotation,
