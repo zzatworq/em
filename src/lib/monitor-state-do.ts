@@ -8,7 +8,7 @@ import { DurableObject } from "cloudflare:workers";
  * durable storage without requiring a database URL or a database ID in CI.
  */
 export class MonitorState extends DurableObject {
-  constructor(ctx: DurableObjectState, env: unknown) {
+  constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.ctx.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS meter_images (
