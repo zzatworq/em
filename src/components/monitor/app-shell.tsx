@@ -17,7 +17,7 @@ const PAGES = [
 ] as const;
 
 function BrandIcon({ className = "size-4" }: { className?: string }) {
-  return <Zap className={cn(className, "text-white")} fill="white" strokeWidth={1.75} aria-hidden="true" />;
+  return <Zap className={cn(className, "text-primary-foreground")} fill="currentColor" strokeWidth={1.75} aria-hidden="true" />;
 }
 
 function dataFromStore(): MonitorData {
