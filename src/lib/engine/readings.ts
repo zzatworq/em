@@ -1,5 +1,4 @@
 import type { CarriedReading, ReadingInput } from "./types";
-import { profileWeightBetween } from "./time";
 
 export function applyCarryForward(readings: ReadingInput[]): CarriedReading[] {
   let lastNew: number | null = null;
@@ -35,12 +34,10 @@ function interpolateMeter(
   const b = before[key] as number;
   const a = after[key] as number;
   if (a < b) return null;
-  const beforeDt = new Date(before.datetime);
-  const afterDt = new Date(after.datetime);
-  const totalWeight = profileWeightBetween(beforeDt, afterDt);
-  if (totalWeight <= 0) {
-    const fraction = (target.getTime() - before.datetime) / (after.datetime - before.datetime);
-    return b + (a - b) * fraction;
+  const fraction = Math.max(0, Math.min(1,
+    (target.getTime() - before.datetime) / (after.datetime - before.datetime),
+  ));
+  return b + (a - b) * fraction;
   }
   const targetWeight = profileWeightBetween(beforeDt, target);
   const fraction = Math.max(0, Math.min(1, targetWeight / totalWeight));
