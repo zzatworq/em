@@ -1,13 +1,5 @@
 import type { Adjustments, GeneralSettings, Slab, Tariff } from "./types";
 
-export const ESTIMATION_PROFILE: number[] = [
-  0.1743431221, 0.1743431221, 0.1743431221, 0.1743431221, 0.1743431221,
-  0.1743431221, 0.1743431221, 0.076258988, 0.0108695652, 0.0108695652,
-  0.0108695652, 0.0108695652, 0.01, 0.01, 0.01, 0.01, 0.01, 0.05625,
-  0.1408928571, 0.2419340659, 0.1977546071, 0.1743431221, 0.1743431221,
-  0.1743431221,
-];
-
 export const DEFAULT_GENERAL: GeneralSettings = {
   goalCombinedUnits: 100,
   billingDay: 13,
