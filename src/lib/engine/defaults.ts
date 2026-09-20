@@ -75,8 +75,8 @@ export function defaultTariff(sanctionedLoadKw = 1): Tariff {
 }
 
 /** Backfill tariffs stored before the PITC-style billing engine was introduced. */
-export function normalizeTariff(value: Partial<Tariff> | null | undefined): Tariff {
-  const base = defaultTariff();
+export function normalizeTariff(value: Partial<Tariff> | null | undefined, defaultLoadKw = 1): Tariff {
+  const base = defaultTariff(defaultLoadKw);
   const v = value ?? {};
   return {
     ...base,
