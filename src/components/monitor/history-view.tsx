@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
@@ -39,33 +40,69 @@ function billingMonthEndBoundary(month: string, gs: { billingDay: number; billin
   return new Date(year, index, gs.billingDay, gs.billingHour, gs.billingMinute, 0, 0);
 }
 
+const HISTORY_PAGE_SIZE = 6;
+
 function HistoryTable({ title, rows }: { title: string; rows: HistoryRow[] }) {
+  const [page, setPage] = useState(0);
   const sorted = [...rows].sort((a, b) => (historyMonthKey(b.month) ?? 0) - (historyMonthKey(a.month) ?? 0));
+  const pageCount = Math.max(1, Math.ceil(sorted.length / HISTORY_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const start = currentPage * HISTORY_PAGE_SIZE;
+  const visible = sorted.slice(start, start + HISTORY_PAGE_SIZE);
+
   return (
     <div className="min-w-0">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h3 className="font-medium">{title}</h3>
-        <span className="shrink-0 text-xs text-muted">{sorted.length} periods</span>
+        <div className="flex items-center gap-1">
+          <span className="mr-1 text-xs text-muted">
+            {sorted.length ? `${start + 1}–${Math.min(start + HISTORY_PAGE_SIZE, sorted.length)} of ${sorted.length}` : "0 periods"}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            disabled={currentPage === 0}
+            onClick={() => setPage((value) => Math.max(0, value - 1))}
+            aria-label={"Older " + title + " history"}
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            disabled={currentPage >= pageCount - 1}
+            onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}
+            aria-label={"Newer " + title + " history"}
+          >
+            <ChevronRight className="size-4" />
+          </Button>
+        </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[520px] text-sm">
+        <table className="w-full min-w-[600px] text-sm">
           <thead>
             <tr className="text-left text-xs uppercase tracking-wider text-muted">
               <th className="pb-2 pr-3 font-medium">Month</th>
               <th className="pb-2 px-2 text-center font-medium">Status</th>
               <th className="pb-2 px-2 text-right font-medium">Reading</th>
               <th className="pb-2 px-2 text-right font-medium">Billed units</th>
-              <th className="pb-2 pl-2 text-right font-medium">Bill</th>
+              <th className="pb-2 px-2 text-right font-medium">Bill</th>
+              <th className="pb-2 pl-2 text-right font-medium">Payment</th>
             </tr>
           </thead>
           <tbody>
-            {sorted.map((row) => (
+            {visible.map((row) => (
               <tr key={row.id} className="border-t border-border">
                 <td className="py-2.5 pr-3">{row.month}</td>
-                <td className="py-2.5 px-2 text-center text-xs text-muted">{row.status}</td>
+                <td className="py-2.5 px-2 text-center text-xs text-muted">{row.status || "—"}</td>
                 <td className="py-2.5 px-2 text-right tabular-nums">{row.reading == null ? "—" : units(row.reading, 0)}</td>
                 <td className="py-2.5 px-2 text-right tabular-nums">{units(row.units, 0)}</td>
-                <td className="py-2.5 pl-2 text-right tabular-nums">{money(row.bill)}</td>
+                <td className="py-2.5 px-2 text-right tabular-nums">{money(row.bill)}</td>
+                <td className="py-2.5 pl-2 text-right tabular-nums">{money(row.payment)}</td>
               </tr>
             ))}
           </tbody>
