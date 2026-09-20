@@ -1,12 +1,4 @@
-import type { Adjustments, GeneralSettings, Slab, Tariff } from "./types";
-
-export const ESTIMATION_PROFILE: number[] = [
-  0.1743431221, 0.1743431221, 0.1743431221, 0.1743431221, 0.1743431221,
-  0.1743431221, 0.1743431221, 0.076258988, 0.0108695652, 0.0108695652,
-  0.0108695652, 0.0108695652, 0.01, 0.01, 0.01, 0.01, 0.01, 0.05625,
-  0.1408928571, 0.2419340659, 0.1977546071, 0.1743431221, 0.1743431221,
-  0.1743431221,
-];
+import type { Adjustments, FpaSettings, GeneralSettings, Slab, Tariff } from "./types";
 
 export const DEFAULT_GENERAL: GeneralSettings = {
   goalCombinedUnits: 100,
@@ -23,26 +15,27 @@ export const DEFAULT_GENERAL: GeneralSettings = {
   v1Url: "",
 };
 
-const DEFAULT_ADJUSTMENTS: Adjustments = {
+export const DEFAULT_ADJUSTMENTS: Adjustments = {
   FCA: 0,
   QTA: 0,
   FC: 0,
   NJ: 0,
   ED: 1.5,
-  GST: 17,
-  TV: 35,
+  GST: 18,
+  TV: 0,
   OtherFixed: 0,
+  dutyBase: "ENERGY_PLUS_QTA",
 };
 
 export const DEFAULT_SLABS: Slab[] = [
-  { min: 1, max: 100, rate: 37.5, fixed: 275 },
-  { min: 101, max: 200, rate: 43.5, fixed: 300 },
-  { min: 201, max: 300, rate: 33.1, fixed: 350 },
+  { min: 1, max: 100, rate: 22.44, fixed: 275 },
+  { min: 101, max: 200, rate: 28.91, fixed: 300 },
+  { min: 201, max: 300, rate: 33.10, fixed: 350 },
   { min: 301, max: 400, rate: 36.46, fixed: 400 },
   { min: 401, max: 500, rate: 38.95, fixed: 500 },
   { min: 501, max: 600, rate: 40.22, fixed: 675 },
   { min: 601, max: 700, rate: 41.85, fixed: 675 },
-  { min: 701, max: Infinity, rate: 47.2, fixed: 675 },
+  { min: 701, max: Infinity, rate: 47.20, fixed: 675 },
 ];
 
 export const DEFAULT_PROTECTED: Slab[] = [
@@ -50,15 +43,52 @@ export const DEFAULT_PROTECTED: Slab[] = [
   { min: 101, max: 200, rate: 13.01, fixed: 300 },
 ];
 
-export function defaultTariff(): Tariff {
+export const DEFAULT_FPA: FpaSettings = {
+  enabled: false,
+  energyPerUnit: 0,
+  dutyRate: 1.5,
+  gstRate: 18,
+  referenceMonth: "",
+};
+
+export function defaultTariff(sanctionedLoadKw = 1): Tariff {
   return {
     effectiveFrom: "06-Feb-2026",
     consumerType: "Unprotected",
+    protectionMode: "UNPROTECTED",
+    protectionMonths: 6,
+    protectionMaxUnits: 200,
     tariff: "A-1 Residential",
     connectionType: "Single Phase",
+    sanctionedLoadKw,
+    taxStatus: "NON_ATL",
+    incomeTaxEnabled: true,
+    incomeTaxThreshold: 25000,
+    incomeTaxRate: 7.5,
+    roundingPolicy: "PITC",
     slabMode: "ALL_UNITS_AT_APPLICABLE_RATE",
     slabs: DEFAULT_SLABS.map((s) => ({ ...s })),
     protectedSlabs: DEFAULT_PROTECTED.map((s) => ({ ...s })),
     adjustments: { ...DEFAULT_ADJUSTMENTS },
+    fpa: { ...DEFAULT_FPA },
+  };
+}
+
+/** Backfill tariffs stored before the PITC-style billing engine was introduced. */
+export function normalizeTariff(value: Partial<Tariff> | null | undefined): Tariff {
+  const base = defaultTariff();
+  const v = value ?? {};
+  return {
+    ...base,
+    ...v,
+    sanctionedLoadKw: Number.isFinite(Number(v.sanctionedLoadKw)) ? Number(v.sanctionedLoadKw) : base.sanctionedLoadKw,
+    protectionMonths: Number.isFinite(Number(v.protectionMonths)) ? Number(v.protectionMonths) : base.protectionMonths,
+    protectionMaxUnits: Number.isFinite(Number(v.protectionMaxUnits)) ? Number(v.protectionMaxUnits) : base.protectionMaxUnits,
+    incomeTaxThreshold: Number.isFinite(Number(v.incomeTaxThreshold)) ? Number(v.incomeTaxThreshold) : base.incomeTaxThreshold,
+    incomeTaxRate: Number.isFinite(Number(v.incomeTaxRate)) ? Number(v.incomeTaxRate) : base.incomeTaxRate,
+    adjustments: { ...base.adjustments, ...(v.adjustments ?? {}) },
+    fpa: { ...base.fpa, ...(v.fpa ?? {}) },
+    slabs: Array.isArray(v.slabs) && v.slabs.length ? v.slabs.map((s) => ({ ...s })) : base.slabs,
+    protectedSlabs: Array.isArray(v.protectedSlabs) && v.protectedSlabs.length ? v.protectedSlabs.map((s) => ({ ...s })) : base.protectedSlabs,
   };
 }
