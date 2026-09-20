@@ -17,8 +17,8 @@ export const DEFAULT_GENERAL: GeneralSettings = {
 
 export const DEFAULT_ADJUSTMENTS: Adjustments = {
   FCA: 0,
-  QTA: 0,
-  FC: 0,
+  QTA: 0.5194,
+  FC: 3.23,
   NJ: 0,
   ED: 1.5,
   GST: 18,
@@ -44,11 +44,11 @@ export const DEFAULT_PROTECTED: Slab[] = [
 ];
 
 export const DEFAULT_FPA: FpaSettings = {
-  enabled: false,
-  energyPerUnit: 0,
+  enabled: true,
+  energyPerUnit: 2.0581,
   dutyRate: 1.5,
   gstRate: 18,
-  referenceMonth: "",
+  referenceMonth: "July 2026 — billed September 2026",
 };
 
 export function defaultTariff(sanctionedLoadKw = 1): Tariff {
