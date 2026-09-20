@@ -1,5 +1,4 @@
 import type { GeneralSettings } from "./types";
-import { ESTIMATION_PROFILE } from "./defaults";
 
 const DAY_MS = 86400000;
 type BillingClock = Pick<GeneralSettings, "billingHour" | "billingMinute">;
@@ -69,24 +68,12 @@ export function ymd(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
-export function profileWeightAt(datetime: Date): number {
-  return Math.max(0.000001, Number(ESTIMATION_PROFILE[datetime.getHours()] || 0));
-}
-
+/**
+ * Equal elapsed-time weighting. Historical consumption is learned from
+ * actual reading intervals rather than a hard-coded daily usage curve.
+ */
 export function profileWeightBetween(start: Date, end: Date): number {
-  if (end <= start) return 0;
-  let total = 0;
-  let cursor = new Date(start);
-  while (cursor < end) {
-    const nextHour = new Date(cursor);
-    nextHour.setMinutes(0, 0, 0);
-    nextHour.setHours(nextHour.getHours() + 1);
-    const segmentEnd = nextHour < end ? nextHour : end;
-    const minutes = (segmentEnd.getTime() - cursor.getTime()) / 60000;
-    total += profileWeightAt(cursor) * minutes;
-    cursor = segmentEnd;
-  }
-  return total;
+  return end > start ? end.getTime() - start.getTime() : 0;
 }
 
 export function money(value: number | string | "" | null | undefined): string {
