@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { defaultTariff, DEFAULT_GENERAL } from "@/lib/engine/defaults";
+import { defaultTariff, DEFAULT_GENERAL, normalizeTariff } from "@/lib/engine/defaults";
 import { rebuildCollectionChain, syncCollectionHistory } from "@/lib/engine/history";
 import { availableMonths, computeDashboard, hourlyForDay } from "@/lib/engine/dashboard";
 import { getHourlyDistributionProfile } from "@/lib/engine/hourly-profile";
@@ -9,7 +9,7 @@ import type { Collection, GeneralSettings, HourlyPoint, Note, ReadingInput, Tari
 export type TabId = "summary" | "bill" | "history" | "readings" | "notes" | "settings";
 type State = MonitorData & { tab: TabId; selectedMonth: string | null; assume5050: boolean; hourlyDay: string; hourlyOverride: HourlyPoint[] | null; hydrated: boolean; dirty: boolean; setTab: (tab: TabId) => void; setMonth: (value: string) => void; setAssume5050: (v: boolean) => void; setHourlyDay: (v: string) => void; replaceData: (data: MonitorData) => void; markDirty: () => void; markSaved: () => void; addReading: (r: Omit<ReadingInput, "id">) => string; updateReading: (id: string, r: Partial<ReadingInput>) => void; deleteReading: (id: string) => void; clearAllReadings: () => void; addNote: (text: string) => void; deleteNote: (id: string) => void; addCollection: (c: Omit<Collection, "id">) => void; updateCollection: (id: string, c: Partial<Collection>) => void; deleteCollection: (id: string) => void; saveGeneral: (g: GeneralSettings) => void; saveTariffs: (t1: Tariff, t2: Tariff) => void; resetDemo: () => void; fixMeter2LegacyReadings: () => void };
 function uid(prefix: string) { return `${prefix}-${crypto.randomUUID?.() ?? Math.random().toString(36).slice(2, 10)}`; }
-const empty = (): MonitorData => ({ readings: [], collections: [], history: [], notes: [], general: { ...DEFAULT_GENERAL }, tariff1: defaultTariff(), tariff2: defaultTariff() });
+const empty = (): MonitorData => ({ readings: [], collections: [], history: [], notes: [], general: { ...DEFAULT_GENERAL }, tariff1: defaultTariff(3), tariff2: defaultTariff(2) });
 export const useMonitor = create<State>()((set, get) => ({
   ...empty(), tab: "summary", selectedMonth: null, assume5050: false, hourlyDay: "last24", hourlyOverride: null, hydrated: false, dirty: false,
   setTab: (tab) => set({ tab }), setMonth: (value) => set({ selectedMonth: value, hourlyOverride: null }), setAssume5050: (assume5050) => set({ assume5050 }),
