@@ -82,27 +82,27 @@ function HistoryTable({ title, rows }: { title: string; rows: HistoryRow[] }) {
           </Button>
         </div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[600px] text-sm">
+      <div className="w-full overflow-hidden">
+        <table className="w-full table-fixed text-xs sm:text-sm">
           <thead>
             <tr className="text-left text-xs uppercase tracking-wider text-muted">
-              <th className="pb-2 pr-3 font-medium">Month</th>
-              <th className="pb-2 px-2 text-center font-medium">Status</th>
-              <th className="pb-2 px-2 text-right font-medium">Reading</th>
-              <th className="pb-2 px-2 text-right font-medium">Billed units</th>
-              <th className="pb-2 px-2 text-right font-medium">Bill</th>
-              <th className="pb-2 pl-2 text-right font-medium">Payment</th>
+              <th className="w-[19%] pb-2 pr-1 font-medium sm:pr-3">Month</th>
+              <th className="w-[12%] pb-2 px-1 text-center font-medium">Status</th>
+              <th className="w-[18%] pb-2 px-1 text-right font-medium">Reading</th>
+              <th className="w-[15%] pb-2 px-1 text-right font-medium">Units</th>
+              <th className="w-[18%] pb-2 px-1 text-right font-medium">Bill</th>
+              <th className="w-[18%] pb-2 pl-1 text-right font-medium">Payment</th>
             </tr>
           </thead>
           <tbody>
             {visible.map((row) => (
               <tr key={row.id} className="border-t border-border">
-                <td className="py-2.5 pr-3">{row.month}</td>
-                <td className="py-2.5 px-2 text-center text-xs text-muted">{row.status || "—"}</td>
-                <td className="py-2.5 px-2 text-right tabular-nums">{row.reading == null ? "—" : units(row.reading, 0)}</td>
-                <td className="py-2.5 px-2 text-right tabular-nums">{units(row.units, 0)}</td>
-                <td className="py-2.5 px-2 text-right tabular-nums">{money(row.bill)}</td>
-                <td className="py-2.5 pl-2 text-right tabular-nums">{money(row.payment)}</td>
+                <td className="whitespace-nowrap py-2 pr-1 sm:pr-3">{row.month}</td>
+                <td className="whitespace-nowrap py-2 px-1 text-center text-muted">{row.status || "—"}</td>
+                <td className="whitespace-nowrap py-2 px-1 text-right tabular-nums">{row.reading == null ? "—" : units(row.reading, 0)}</td>
+                <td className="whitespace-nowrap py-2 px-1 text-right tabular-nums">{units(row.units, 0)}</td>
+                <td className="whitespace-nowrap py-2 px-1 text-right tabular-nums">{money(row.bill)}</td>
+                <td className="whitespace-nowrap py-2 pl-1 text-right tabular-nums">{money(row.payment)}</td>
               </tr>
             ))}
           </tbody>
