@@ -71,9 +71,9 @@ export const useMonitor = create<State>()((set, get) => ({
 }));
 
 export function useDashboard() {
-  const readings = useMonitor((s) => s.readings), collections = useMonitor((s) => s.collections), general = useMonitor((s) => s.general), tariff1 = useMonitor((s) => s.tariff1), tariff2 = useMonitor((s) => s.tariff2), selectedMonth = useMonitor((s) => s.selectedMonth);
+  const readings = useMonitor((s) => s.readings), collections = useMonitor((s) => s.collections), history = useMonitor((s) => s.history), general = useMonitor((s) => s.general), tariff1 = useMonitor((s) => s.tariff1), tariff2 = useMonitor((s) => s.tariff2), selectedMonth = useMonitor((s) => s.selectedMonth);
   const now = new Date(), months = availableMonths(readings, now, general), selectedStart = selectedMonth ? new Date(Number(selectedMonth)) : null;
-  const dashboard = computeDashboard({ inputs: readings, now, selectedStart: selectedStart && !Number.isNaN(selectedStart.getTime()) ? selectedStart : null, gs: general, tariff1, tariff2, collections });
+  const dashboard = computeDashboard({ inputs: readings, now, selectedStart: selectedStart && !Number.isNaN(selectedStart.getTime()) ? selectedStart : null, gs: general, tariff1, tariff2, collections, history });
   const hourlyProfile = getHourlyDistributionProfile(readings, general, now);
   return { dashboard, months, now, hourlyProfile };
 }
