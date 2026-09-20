@@ -1,5 +1,4 @@
 import type { GeneralSettings } from "./types";
-import { ESTIMATION_PROFILE } from "./defaults";
 
 const DAY_MS = 86400000;
 type BillingClock = Pick<GeneralSettings, "billingHour" | "billingMinute">;
@@ -69,24 +68,15 @@ export function ymd(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
-export function profileWeightAt(datetime: Date): number {
-  return Math.max(0.000001, Number(ESTIMATION_PROFILE[datetime.getHours()] || 0));
+export function profileWeightAt(_datetime: Date): number {
+  // Meter intervals do not reveal intra-interval consumption. Use elapsed
+  // time rather than a hard-coded household usage curve.
+  return 1;
 }
 
 export function profileWeightBetween(start: Date, end: Date): number {
   if (end <= start) return 0;
-  let total = 0;
-  let cursor = new Date(start);
-  while (cursor < end) {
-    const nextHour = new Date(cursor);
-    nextHour.setMinutes(0, 0, 0);
-    nextHour.setHours(nextHour.getHours() + 1);
-    const segmentEnd = nextHour < end ? nextHour : end;
-    const minutes = (segmentEnd.getTime() - cursor.getTime()) / 60000;
-    total += profileWeightAt(cursor) * minutes;
-    cursor = segmentEnd;
-  }
-  return total;
+  return (end.getTime() - start.getTime()) / 60000;
 }
 
 export function money(value: number | string | "" | null | undefined): string {
