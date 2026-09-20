@@ -34,8 +34,8 @@ export const useMonitor = create<State>()((set, get) => ({
     set({
       ...data,
       collections,
-      tariff1: normalizeTariff(data.tariff1),
-      tariff2: normalizeTariff(data.tariff2),
+      tariff1: normalizeTariff(data.tariff1, 3),
+      tariff2: normalizeTariff(data.tariff2, 2),
       history: syncCollectionHistory(correctedHistory, collections),
       hydrated: true,
       dirty: corrected,
