@@ -248,7 +248,7 @@ export function computeDashboard(opts: {
   tariff2: Tariff;
   collections: Collection[];
 }) {
-  const { inputs, now, gs, tariff1, tariff2, collections } = opts;
+  const { inputs, now, gs, tariff1, tariff2, collections, history = [] } = opts;
   const readings = applyCarryForward([...inputs].sort((a, b) => a.datetime - b.datetime));
   if (!readings.length) return { empty: true as const, message: "No meter readings yet. Add one on the Readings tab." };
 
