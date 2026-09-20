@@ -10,7 +10,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  *
  * A measured interval is distributed uniformly across elapsed time because
  * the exact intra-interval consumption is unknown. Each completed 5pm-to-5pm
- * day contributes equally, so days with more readings do not dominate.
+ * day is weighted by the number of actual readings recorded that day. This\n * preserves the stronger signal from densely sampled days without using a\n * predefined consumption curve.
  */
 export function getHourlyDistributionProfile(
   inputs: ReadingInput[],
@@ -21,7 +21,7 @@ export function getHourlyDistributionProfile(
   const readings = applyCarryForward(source);
   if (readings.length < 2) return [];
 
-  const dayBuckets = new Map<number, number[]>();
+  const dayBuckets = new Map<number, { values: number[]; weight: number }>();
 
   for (let i = 1; i < readings.length; i++) {
     const start = readings[i - 1];
@@ -47,8 +47,8 @@ export function getHourlyDistributionProfile(
       const segmentEndMs = Math.min(end.datetime, dayEndMs);
 
       if (dayEndMs <= now.getTime()) {
-        const bucket = dayBuckets.get(dayStart.getTime())
-          ?? Array.from({ length: 24 }, () => 0);
+        const existing = dayBuckets.get(dayStart.getTime());
+        const bucket = existing?.values ?? Array.from({ length: 24 }, () => 0);
 
         let hourCursor = cursor.getTime();
         while (hourCursor < segmentEndMs) {
@@ -68,21 +68,30 @@ export function getHourlyDistributionProfile(
           hourCursor = hourEndMs;
         }
 
-        dayBuckets.set(dayStart.getTime(), bucket);
+        const weight = source.filter((reading) => {
+          const readingDay = getFivePmDayStart(new Date(reading.datetime), {
+            billingHour: gs.billingHour,
+            billingMinute: gs.billingMinute,
+          });
+          return readingDay.getTime() === dayStart.getTime();
+        }).length;
+        dayBuckets.set(dayStart.getTime(), { values: bucket, weight });
       }
 
       cursor = new Date(segmentEndMs);
     }
   }
 
-  const days = [...dayBuckets.values()].filter((day) => day.some((v) => v > 0));
+  const days = [...dayBuckets.values()].filter((day) => day.values.some((v) => v > 0 && day.weight > 0));
   if (!days.length) return [];
 
   const profile = Array.from({ length: 24 }, () => 0);
   for (const day of days) {
-    const total = day.reduce((sum, value) => sum + value, 0);
-    if (total <= 0) continue;
-    for (let hour = 0; hour < 24; hour++) profile[hour] += day[hour] / total;
+    const total = day.values.reduce((sum, value) => sum + value, 0);
+    if (total <= 0 || day.weight <= 0) continue;
+    for (let hour = 0; hour < 24; hour++) {
+      profile[hour] += (day.values[hour] / total) * day.weight;
+    }
   }
 
   const sum = profile.reduce((a, b) => a + b, 0);
