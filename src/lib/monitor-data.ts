@@ -39,8 +39,8 @@ function normalize(value: unknown): MonitorData {
     history: syncCollectionHistory(Array.isArray(v.history) ? v.history : fallback.history, collections),
     notes: Array.isArray(v.notes) ? v.notes : fallback.notes,
     general: v.general && typeof v.general === "object" ? { ...fallback.general, ...v.general } : fallback.general,
-    tariff1: normalizeTariff(v.tariff1 && typeof v.tariff1 === "object" ? v.tariff1 : fallback.tariff1),
-    tariff2: normalizeTariff(v.tariff2 && typeof v.tariff2 === "object" ? v.tariff2 : fallback.tariff2),
+    tariff1: normalizeTariff(v.tariff1 && typeof v.tariff1 === "object" ? v.tariff1 : fallback.tariff1, 3),
+    tariff2: normalizeTariff(v.tariff2 && typeof v.tariff2 === "object" ? v.tariff2 : fallback.tariff2, 2),
   };
 }
 
