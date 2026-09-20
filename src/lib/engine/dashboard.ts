@@ -4,6 +4,7 @@ import type {
   DailyPoint,
   GeneralSettings,
   GoalPace,
+  HistoryRow,
   HourlyPoint,
   MeterId,
   ReadingInput,
@@ -247,6 +248,7 @@ export function computeDashboard(opts: {
   tariff1: Tariff;
   tariff2: Tariff;
   collections: Collection[];
+  history?: HistoryRow[];
 }) {
   const { inputs, now, gs, tariff1, tariff2, collections, history = [] } = opts;
   const readings = applyCarryForward([...inputs].sort((a, b) => a.datetime - b.datetime));
@@ -290,8 +292,15 @@ export function computeDashboard(opts: {
   const totalConsumptionNew = (billingNew === "" ? 0 : Number(billingNew)) + carryForwardNew;
   const totalConsumptionOld = (billingOld === "" ? 0 : Number(billingOld)) + carryForwardOld;
   const totalConsumptionCombined = totalConsumptionNew + totalConsumptionOld;
-  const currentBill1 = calculateMeterBill(totalConsumptionNew, tariff1);
-  const currentBill2 = calculateMeterBill(totalConsumptionOld, tariff2);
+  const recentUnitsFor = (meter: MeterId) => history
+    .filter((row) => row.meter === meter)
+    .map((row) => Number(row.units))
+    .filter(Number.isFinite)
+    .slice(-6);
+  const billContext1 = { recentMonthlyUnits: recentUnitsFor("METER 1") };
+  const billContext2 = { recentMonthlyUnits: recentUnitsFor("METER 2") };
+  const currentBill1 = calculateMeterBill(totalConsumptionNew, tariff1, billContext1);
+  const currentBill2 = calculateMeterBill(totalConsumptionOld, tariff2, billContext2);
   const projectedConsumptionNew = projection.newMeter;
   const projectedConsumptionOld = projection.oldMeter;
   const projectedConsumptionCombined = projection.total;
@@ -299,10 +308,10 @@ export function computeDashboard(opts: {
   const actualOldSoFar = billingOld === "" ? 0 : Number(billingOld);
   const remainingTotal = isCurrent ? Math.max(0, projection.total - (actualNewSoFar + actualOldSoFar)) : 0;
   const halfRemaining = remainingTotal / 2;
-  const split1 = calculateMeterBill(actualNewSoFar + halfRemaining, tariff1);
-  const split2 = calculateMeterBill(actualOldSoFar + halfRemaining, tariff2);
-  const projectedActual1 = calculateMeterBill(projectedConsumptionNew, tariff1);
-  const projectedActual2 = calculateMeterBill(projectedConsumptionOld, tariff2);
+  const split1 = calculateMeterBill(actualNewSoFar + halfRemaining, tariff1, billContext1);
+  const split2 = calculateMeterBill(actualOldSoFar + halfRemaining, tariff2, billContext2);
+  const projectedActual1 = calculateMeterBill(projectedConsumptionNew, tariff1, billContext1);
+  const projectedActual2 = calculateMeterBill(projectedConsumptionOld, tariff2, billContext2);
   const periodStd = billingPeriodLengthDays(billingStart);
   const pro1 = calculateProRata(startR.newReading, latest?.newReading ?? null, elapsedDays, periodStd);
   const pro2 = calculateProRata(startR.oldReading, latest?.oldReading ?? null, elapsedDays, periodStd);
