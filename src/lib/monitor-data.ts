@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { env } from "cloudflare:workers";
-import { defaultTariff, DEFAULT_GENERAL } from "@/lib/engine/defaults";
+import { defaultTariff, DEFAULT_GENERAL, normalizeTariff } from "@/lib/engine/defaults";
 import { syncCollectionHistory } from "@/lib/engine/history";
 import { seedCollections, seedHistory, seedNotes, seedReadings } from "@/lib/engine/seed";
 import type { Collection, GeneralSettings, HistoryRow, Note, ReadingInput, Tariff } from "@/lib/engine/types";
