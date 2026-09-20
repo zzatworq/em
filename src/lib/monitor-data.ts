@@ -23,8 +23,8 @@ function demo(): MonitorData {
     history: syncCollectionHistory(seedHistory(), collections),
     notes: seedNotes(),
     general: { ...DEFAULT_GENERAL },
-    tariff1: defaultTariff(),
-    tariff2: defaultTariff(),
+    tariff1: defaultTariff(3),
+    tariff2: defaultTariff(2),
   };
 }
 
