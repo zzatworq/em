@@ -70,8 +70,45 @@ export function defaultTariff(sanctionedLoadKw = 1): Tariff {
     slabs: DEFAULT_SLABS.map((s) => ({ ...s })),
     protectedSlabs: DEFAULT_PROTECTED.map((s) => ({ ...s })),
     adjustments: { ...DEFAULT_ADJUSTMENTS },
-    fpa: { enabled: true, energyPerUnit: 2.0581, dutyRate: 1.5, gstRate: 18, referenceMonth: "July 2026 — billed September 2026" },
-  slabs: Array.isArray(v.slabs) && v.slabs.length ? v.slabs.map((s) => ({ ...s })) : base.slabs,
-    protectedSlabs: Array.isArray(v.protectedSlabs) && v.protectedSlabs.length ? v.protectedSlabs.map((s) => ({ ...s })) : base.protectedSlabs,
+    fpa: { ...DEFAULT_FPA },
+  };
+}
+
+/** Backfill tariffs stored before the PITC-style billing engine was introduced. */
+export function normalizeTariff(
+  value: Partial<Tariff> | null | undefined,
+  defaultLoadKw = 1,
+): Tariff {
+  const base = defaultTariff(defaultLoadKw);
+  const v = value ?? {};
+
+  return {
+    ...base,
+    ...v,
+    sanctionedLoadKw: Number.isFinite(Number(v.sanctionedLoadKw))
+      ? Number(v.sanctionedLoadKw)
+      : base.sanctionedLoadKw,
+    protectionMonths: Number.isFinite(Number(v.protectionMonths))
+      ? Number(v.protectionMonths)
+      : base.protectionMonths,
+    protectionMaxUnits: Number.isFinite(Number(v.protectionMaxUnits))
+      ? Number(v.protectionMaxUnits)
+      : base.protectionMaxUnits,
+    incomeTaxThreshold: Number.isFinite(Number(v.incomeTaxThreshold))
+      ? Number(v.incomeTaxThreshold)
+      : base.incomeTaxThreshold,
+    incomeTaxRate: Number.isFinite(Number(v.incomeTaxRate))
+      ? Number(v.incomeTaxRate)
+      : base.incomeTaxRate,
+    adjustments: { ...base.adjustments, ...(v.adjustments ?? {}) },
+    fpa: { ...base.fpa, ...(v.fpa ?? {}) },
+    slabs:
+      Array.isArray(v.slabs) && v.slabs.length
+        ? v.slabs.map((s) => ({ ...s }))
+        : base.slabs,
+    protectedSlabs:
+      Array.isArray(v.protectedSlabs) && v.protectedSlabs.length
+        ? v.protectedSlabs.map((s) => ({ ...s }))
+        : base.protectedSlabs,
   };
 }
