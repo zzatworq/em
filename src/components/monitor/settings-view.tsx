@@ -5,10 +5,61 @@ import { downloadBackup, downloadReadingsCsv, parseBackup, parseReadingsCsv } fr
 import type { GeneralSettings, Tariff } from "@/lib/engine/types";
 import { useMonitor } from "@/store/monitor";
 
-function Field({ label, value, onChange, type = "text" }: { label: string; value: string | number; onChange: (v: string) => void; type?: string }) { return <div className="min-w-0"><Label>{label}</Label><Input className="mt-1 min-w-0 w-full" type={type} value={value} onChange={(e) => onChange(e.target.value)} /></div>; }
+function Field({ label, value, onChange, type = "text", step }: { label: string; value: string | number; onChange: (v: string) => void; type?: string; step?: string }) { return <div className="min-w-0"><Label>{label}</Label><Input className="mt-1 min-w-0 w-full" type={type} step={step} value={value} onChange={(e) => onChange(e.target.value)} /></div>; }
+function SelectField({ label, value, options, onChange }: { label: string; value: string; options: Array<[string, string]>; onChange: (v: string) => void }) { return <div className="min-w-0"><Label>{label}</Label><select className="mt-1 h-10 w-full min-w-0 rounded-md border border-border bg-background px-3 text-sm" value={value} onChange={(e) => onChange(e.target.value)}>{options.map(([v, text]) => <option key={v} value={v}>{text}</option>)}</select></div>; }
 function TimeField({ label, hour, minute, onChange }: { label: string; hour: number; minute: number; onChange: (hour: number, minute: number) => void }) { const pad = (n: number) => String(n).padStart(2, "0"); return <div className="min-w-0"><Label>{label}</Label><Input className="mt-1 min-w-0 w-full" type="time" value={`${pad(hour)}:${pad(minute)}`} onChange={(e) => { const [h, m] = e.target.value.split(":").map(Number); if (!Number.isNaN(h) && !Number.isNaN(m)) onChange(h, m); }} /></div>; }
 function RangeField({ label, from, to, onFromChange, onToChange }: { label: string; from: number; to: number; onFromChange: (v: number) => void; onToChange: (v: number) => void }) { return <div className="min-w-0"><Label>{label}</Label><div className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2"><Input className="min-w-0 w-full" type="number" min={0} max={23} value={from} onChange={(e) => onFromChange(Number(e.target.value))} aria-label={`${label} start`} /><span className="text-sm text-muted">–</span><Input className="min-w-0 w-full" type="number" min={0} max={23} value={to} onChange={(e) => onToChange(Number(e.target.value))} aria-label={`${label} end`} /></div></div>; }
-function TariffEditor({ title, value, onChange }: { title: string; value: Tariff; onChange: (t: Tariff) => void }) { const setAdj = (key: keyof Tariff["adjustments"], v: string) => onChange({ ...value, adjustments: { ...value.adjustments, [key]: Number(v) } }); const setSlab = (i: number, field: "rate" | "fixed", v: string) => onChange({ ...value, slabs: value.slabs.map((s, idx) => idx === i ? { ...s, [field]: Number(v) } : s) }); return <details className="min-w-0 rounded-xl border border-border p-4" open={title.includes("1")}><summary className="cursor-pointer font-medium">{title}</summary><div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2"><Field label="Consumer type" value={value.consumerType} onChange={(v) => onChange({ ...value, consumerType: v as Tariff["consumerType"] })} /><Field label="Slab mode" value={value.slabMode} onChange={(v) => onChange({ ...value, slabMode: v as Tariff["slabMode"] })} /><Field label="GST %" value={value.adjustments.GST} type="number" onChange={(v) => setAdj("GST", v)} /><Field label="Electricity duty %" value={value.adjustments.ED} type="number" onChange={(v) => setAdj("ED", v)} /><Field label="TV fee" value={value.adjustments.TV} type="number" onChange={(v) => setAdj("TV", v)} /><Field label="Other fixed" value={value.adjustments.OtherFixed} type="number" onChange={(v) => setAdj("OtherFixed", v)} /></div><p className="mt-4 text-xs uppercase tracking-wider text-muted">Slabs (rate / fixed)</p><div className="mt-2 grid gap-2">{value.slabs.map((s, i) => <div key={s.min} className="grid min-w-0 grid-cols-[minmax(4.5rem,7rem)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-2"><span className="min-w-0 text-xs text-muted">{s.max === Infinity ? "Above 700" : `${s.min}–${s.max}`}</span><Input className="min-w-0 w-full" type="number" step="0.01" value={s.rate} onChange={(e) => setSlab(i, "rate", e.target.value)} aria-label={`${s.min} rate`} /><Input className="min-w-0 w-full" type="number" step="0.01" value={s.fixed} onChange={(e) => setSlab(i, "fixed", e.target.value)} aria-label={`${s.min} fixed`} /></div>)}</div></details>; }
+function TariffEditor({ title, value, onChange }: { title: string; value: Tariff; onChange: (t: Tariff) => void }) {
+  const setAdj = (key: keyof Tariff["adjustments"], v: string) => onChange({ ...value, adjustments: { ...value.adjustments, [key]: Number(v) } });
+  const setFpa = (key: keyof Tariff["fpa"], v: string | boolean) => onChange({ ...value, fpa: { ...value.fpa, [key]: typeof v === "boolean" ? v : key === "referenceMonth" ? v : Number(v) } });
+  const setSlab = (i: number, field: "rate" | "fixed", v: string) => onChange({ ...value, slabs: value.slabs.map((s, idx) => idx === i ? { ...s, [field]: Number(v) } : s) });
+  return <details className="min-w-0 rounded-xl border border-border p-4" open={title.includes("1")}>
+    <summary className="cursor-pointer font-medium">{title}</summary>
+    <p className="mt-2 text-sm text-muted">Billing is calculated independently for this meter. Fixed charges are Rs/kW/month and are multiplied by the sanctioned load.</p>
+
+    <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-muted">Connection & protection</p>
+    <div className="mt-2 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <SelectField label="Protection mode" value={value.protectionMode} options={[["UNPROTECTED", "Unprotected"], ["PROTECTED", "Protected"], ["AUTOMATIC", "Automatic — last 6 months"]]} onChange={(v) => onChange({ ...value, protectionMode: v as Tariff["protectionMode"] })} />
+      <Field label="Sanctioned load (kW)" value={value.sanctionedLoadKw} type="number" step="0.01" onChange={(v) => onChange({ ...value, sanctionedLoadKw: Number(v) })} />
+      <SelectField label="Tax status" value={value.taxStatus} options={[["NON_ATL", "Non-ATL"], ["ATL", "ATL"]]} onChange={(v) => onChange({ ...value, taxStatus: v as Tariff["taxStatus"] })} />
+      <Field label="Protection months" value={value.protectionMonths} type="number" onChange={(v) => onChange({ ...value, protectionMonths: Number(v) })} />
+      <Field label="Protection limit (kWh)" value={value.protectionMaxUnits} type="number" onChange={(v) => onChange({ ...value, protectionMaxUnits: Number(v) })} />
+      <SelectField label="Slab mode" value={value.slabMode} options={[["ALL_UNITS_AT_APPLICABLE_RATE", "All units at applicable rate"], ["PROGRESSIVE", "Progressive slabs"]]} onChange={(v) => onChange({ ...value, slabMode: v as Tariff["slabMode"] })} />
+    </div>
+
+    <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-muted">Current-period charges & taxes</p>
+    <div className="mt-2 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <Field label="FCA (Rs/kWh)" value={value.adjustments.FCA} type="number" step="0.0001" onChange={(v) => setAdj("FCA", v)} />
+      <Field label="QTA (Rs/kWh)" value={value.adjustments.QTA} type="number" step="0.0001" onChange={(v) => setAdj("QTA", v)} />
+      <Field label="FC surcharge (Rs/kWh)" value={value.adjustments.FC} type="number" step="0.0001" onChange={(v) => setAdj("FC", v)} />
+      <Field label="NJ surcharge (Rs/kWh)" value={value.adjustments.NJ} type="number" step="0.0001" onChange={(v) => setAdj("NJ", v)} />
+      <Field label="Electricity duty %" value={value.adjustments.ED} type="number" step="0.01" onChange={(v) => setAdj("ED", v)} />
+      <Field label="GST %" value={value.adjustments.GST} type="number" step="0.01" onChange={(v) => setAdj("GST", v)} />
+      <SelectField label="Duty base" value={value.adjustments.dutyBase} options={[["ENERGY_PLUS_QTA", "Energy + QTA"], ["ALL_VARIABLE", "All variable charges"]]} onChange={(v) => setAdj("dutyBase", v)} />
+      <Field label="TV fee" value={value.adjustments.TV} type="number" step="0.01" onChange={(v) => setAdj("TV", v)} />
+      <Field label="Other fixed" value={value.adjustments.OtherFixed} type="number" step="0.01" onChange={(v) => setAdj("OtherFixed", v)} />
+    </div>
+
+    <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-muted">Income tax</p>
+    <div className="mt-2 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <SelectField label="Section 235" value={value.incomeTaxEnabled ? "ON" : "OFF"} options={[["ON", "Enabled"], ["OFF", "Disabled"]]} onChange={(v) => onChange({ ...value, incomeTaxEnabled: v === "ON" })} />
+      <Field label="Threshold (Rs)" value={value.incomeTaxThreshold} type="number" step="1" onChange={(v) => onChange({ ...value, incomeTaxThreshold: Number(v) })} />
+      <Field label="Rate %" value={value.incomeTaxRate} type="number" step="0.01" onChange={(v) => onChange({ ...value, incomeTaxRate: Number(v) })} />
+    </div>
+
+    <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-muted">FPA / reference-month adjustment</p>
+    <div className="mt-2 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <SelectField label="FPA" value={value.fpa.enabled ? "ON" : "OFF"} options={[["OFF", "Disabled"], ["ON", "Enabled"]]} onChange={(v) => setFpa("enabled", v === "ON")} />
+      <Field label="FPA energy (Rs/kWh)" value={value.fpa.energyPerUnit} type="number" step="0.0001" onChange={(v) => setFpa("energyPerUnit", v)} />
+      <Field label="FPA duty %" value={value.fpa.dutyRate} type="number" step="0.01" onChange={(v) => setFpa("dutyRate", v)} />
+      <Field label="FPA GST %" value={value.fpa.gstRate} type="number" step="0.01" onChange={(v) => setFpa("gstRate", v)} />
+      <Field label="Reference month" value={value.fpa.referenceMonth} onChange={(v) => setFpa("referenceMonth", v)} />
+    </div>
+
+    <p className="mt-5 text-xs uppercase tracking-wider text-muted">Energy slabs (rate / fixed Rs/kW)</p>
+    <div className="mt-2 grid gap-2">{value.slabs.map((s, i) => <div key={s.min} className="grid min-w-0 grid-cols-[minmax(4.5rem,7rem)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-2"><span className="min-w-0 text-xs text-muted">{s.max === Infinity ? "Above 700" : `${s.min}–${s.max}`}</span><Input className="min-w-0 w-full" type="number" step="0.01" value={s.rate} onChange={(e) => setSlab(i, "rate", e.target.value)} aria-label={`${s.min} rate`} /><Input className="min-w-0 w-full" type="number" step="0.01" value={s.fixed} onChange={(e) => setSlab(i, "fixed", e.target.value)} aria-label={`${s.min} fixed`} /></div>)}</div>
+  </details>;
+}
 function dataForBackup() { const s = useMonitor.getState(); return { readings: s.readings, collections: s.collections, history: s.history, notes: s.notes, general: s.general, tariff1: s.tariff1, tariff2: s.tariff2 }; }
 export function SettingsView() {
   const general = useMonitor((s) => s.general); const t1 = useMonitor((s) => s.tariff1); const t2 = useMonitor((s) => s.tariff2); const saveGeneral = useMonitor((s) => s.saveGeneral); const saveTariffs = useMonitor((s) => s.saveTariffs); const replaceData = useMonitor((s) => s.replaceData); const markDirty = useMonitor((s) => s.markDirty); const resetDemo = useMonitor((s) => s.resetDemo);
