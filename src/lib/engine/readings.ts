@@ -36,7 +36,7 @@ function interpolateMeter(
   const a = after[key] as number;
   if (a < b) return null;
 
-  const fraction = Math.max(
+  // Interpolate strictly by elapsed time; no predefined usage profile is used here.\n  const fraction = Math.max(
     0,
     Math.min(1, (target.getTime() - before.datetime) / (after.datetime - before.datetime)),
   );
