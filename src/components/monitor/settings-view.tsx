@@ -9,27 +9,28 @@ function Field({ label, value, onChange, type = "text", step }: { label: string;
 function SelectField({ label, value, options, onChange }: { label: string; value: string; options: Array<[string, string]>; onChange: (v: string) => void }) { return <div className="min-w-0"><Label>{label}</Label><select className="mt-1 h-10 w-full min-w-0 rounded-md border border-border bg-background px-3 text-sm" value={value} onChange={(e) => onChange(e.target.value)}>{options.map(([v, text]) => <option key={v} value={v}>{text}</option>)}</select></div>; }
 function TimeField({ label, hour, minute, onChange }: { label: string; hour: number; minute: number; onChange: (hour: number, minute: number) => void }) { const pad = (n: number) => String(n).padStart(2, "0"); return <div className="min-w-0"><Label>{label}</Label><Input className="mt-1 min-w-0 w-full" type="time" value={`${pad(hour)}:${pad(minute)}`} onChange={(e) => { const [h, m] = e.target.value.split(":").map(Number); if (!Number.isNaN(h) && !Number.isNaN(m)) onChange(h, m); }} /></div>; }
 function RangeField({ label, from, to, onFromChange, onToChange }: { label: string; from: number; to: number; onFromChange: (v: number) => void; onToChange: (v: number) => void }) { return <div className="min-w-0"><Label>{label}</Label><div className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2"><Input className="min-w-0 w-full" type="number" min={0} max={23} value={from} onChange={(e) => onFromChange(Number(e.target.value))} aria-label={`${label} start`} /><span className="text-sm text-muted">–</span><Input className="min-w-0 w-full" type="number" min={0} max={23} value={to} onChange={(e) => onToChange(Number(e.target.value))} aria-label={`${label} end`} /></div></div>; }
-function TariffEditor({ title, value, onChange }: { title: string; value: Tariff; onChange: (t: Tariff) => void }) {
+function CommonTariffEditor({ value, onChange }: { value: Tariff; onChange: (t: Tariff) => void }) {
   const setAdj = (key: keyof Tariff["adjustments"], v: string) => onChange({ ...value, adjustments: { ...value.adjustments, [key]: key === "dutyBase" ? v : Number(v) } as Tariff["adjustments"] });
   const setFpa = (key: keyof Tariff["fpa"], v: string | boolean) => onChange({ ...value, fpa: { ...value.fpa, [key]: typeof v === "boolean" ? v : key === "referenceMonth" ? v : Number(v) } as Tariff["fpa"] });
   const setSlab = (i: number, field: "rate" | "fixed", v: string) => onChange({ ...value, slabs: value.slabs.map((s, idx) => idx === i ? { ...s, [field]: Number(v) } : s) });
-  return <details className="min-w-0 rounded-xl border border-border p-4" open={title.includes("1")}>
-    <summary className="cursor-pointer font-medium">{title}</summary>
-    <p className="mt-2 text-sm text-muted">Billing is calculated independently for this meter. Fixed charges are Rs/kW/month and are multiplied by the sanctioned load.</p>
+  return <div className="min-w-0 rounded-xl border border-border p-4">
+    <p className="font-medium">Common for both meters</p>
+    <p className="mt-1 text-sm text-muted">These settings are shared by Meter 1 and Meter 2 and are saved to both configurations.</p>
 
-    <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-muted">Connection & protection</p>
+    <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-muted">Tariff & consumer status</p>
     <div className="mt-2 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <Field label="Effective from" value={value.effectiveFrom} onChange={(v) => onChange({ ...value, effectiveFrom: v })} />
+      <Field label="Tariff category" value={value.tariff} onChange={(v) => onChange({ ...value, tariff: v })} />
+      <Field label="Connection type" value={value.connectionType} onChange={(v) => onChange({ ...value, connectionType: v })} />
       <SelectField label="Protection mode" value={value.protectionMode} options={[["UNPROTECTED", "Unprotected"], ["PROTECTED", "Protected"], ["AUTOMATIC", "Automatic — last 6 months"]]} onChange={(v) => onChange({ ...value, protectionMode: v as Tariff["protectionMode"] })} />
-      <Field label="Sanctioned load (kW)" value={value.sanctionedLoadKw} type="number" step="0.01" onChange={(v) => onChange({ ...value, sanctionedLoadKw: Number(v) })} />
-      <SelectField label="Tax status" value={value.taxStatus} options={[["NON_ATL", "Non-ATL"], ["ATL", "ATL"]]} onChange={(v) => onChange({ ...value, taxStatus: v as Tariff["taxStatus"] })} />
       <Field label="Protection months" value={value.protectionMonths} type="number" onChange={(v) => onChange({ ...value, protectionMonths: Number(v) })} />
       <Field label="Protection limit (kWh)" value={value.protectionMaxUnits} type="number" onChange={(v) => onChange({ ...value, protectionMaxUnits: Number(v) })} />
+      <SelectField label="Tax status" value={value.taxStatus} options={[["NON_ATL", "Non-ATL"], ["ATL", "ATL"]]} onChange={(v) => onChange({ ...value, taxStatus: v as Tariff["taxStatus"] })} />
       <SelectField label="Slab mode" value={value.slabMode} options={[["ALL_UNITS_AT_APPLICABLE_RATE", "All units at applicable rate"], ["PROGRESSIVE", "Progressive slabs"]]} onChange={(v) => onChange({ ...value, slabMode: v as Tariff["slabMode"] })} />
     </div>
 
-    <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-muted">Current-period charges & taxes</p>
+    <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-muted">Common current charges & taxes</p>
     <div className="mt-2 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      <Field label="FCA (Rs/kWh)" value={value.adjustments.FCA} type="number" step="0.0001" onChange={(v) => setAdj("FCA", v)} />
       <Field label="QTA (Rs/kWh)" value={value.adjustments.QTA} type="number" step="0.0001" onChange={(v) => setAdj("QTA", v)} />
       <Field label="FC surcharge (Rs/kWh)" value={value.adjustments.FC} type="number" step="0.0001" onChange={(v) => setAdj("FC", v)} />
       <Field label="NJ surcharge (Rs/kWh)" value={value.adjustments.NJ} type="number" step="0.0001" onChange={(v) => setAdj("NJ", v)} />
@@ -40,14 +41,14 @@ function TariffEditor({ title, value, onChange }: { title: string; value: Tariff
       <Field label="Other fixed" value={value.adjustments.OtherFixed} type="number" step="0.01" onChange={(v) => setAdj("OtherFixed", v)} />
     </div>
 
-    <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-muted">Income tax</p>
+    <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-muted">Section 235 income tax — common</p>
     <div className="mt-2 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       <SelectField label="Section 235" value={value.incomeTaxEnabled ? "ON" : "OFF"} options={[["ON", "Enabled"], ["OFF", "Disabled"]]} onChange={(v) => onChange({ ...value, incomeTaxEnabled: v === "ON" })} />
       <Field label="Threshold (Rs)" value={value.incomeTaxThreshold} type="number" step="1" onChange={(v) => onChange({ ...value, incomeTaxThreshold: Number(v) })} />
       <Field label="Rate %" value={value.incomeTaxRate} type="number" step="0.01" onChange={(v) => onChange({ ...value, incomeTaxRate: Number(v) })} />
     </div>
 
-    <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-muted">FPA / reference-month adjustment</p>
+    <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-muted">FPA / reference-month adjustment — common</p>
     <div className="mt-2 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <SelectField label="FPA" value={value.fpa.enabled ? "ON" : "OFF"} options={[["OFF", "Disabled"], ["ON", "Enabled"]]} onChange={(v) => setFpa("enabled", v === "ON")} />
       <Field label="FPA energy (Rs/kWh)" value={value.fpa.energyPerUnit} type="number" step="0.0001" onChange={(v) => setFpa("energyPerUnit", v)} />
@@ -56,10 +57,21 @@ function TariffEditor({ title, value, onChange }: { title: string; value: Tariff
       <Field label="Reference month" value={value.fpa.referenceMonth} onChange={(v) => setFpa("referenceMonth", v)} />
     </div>
 
-    <p className="mt-5 text-xs uppercase tracking-wider text-muted">Energy slabs (rate / fixed Rs/kW)</p>
+    <p className="mt-5 text-xs uppercase tracking-wider text-muted">Common energy slabs (rate / fixed Rs/kW)</p>
     <div className="mt-2 grid gap-2">{value.slabs.map((s, i) => <div key={s.min} className="grid min-w-0 grid-cols-[minmax(4.5rem,7rem)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-2"><span className="min-w-0 text-xs text-muted">{s.max === Infinity ? "Above 700" : `${s.min}–${s.max}`}</span><Input className="min-w-0 w-full" type="number" step="0.01" value={s.rate} onChange={(e) => setSlab(i, "rate", e.target.value)} aria-label={`${s.min} rate`} /><Input className="min-w-0 w-full" type="number" step="0.01" value={s.fixed} onChange={(e) => setSlab(i, "fixed", e.target.value)} aria-label={`${s.min} fixed`} /></div>)}</div>
+  </div>;
+}
+
+function MeterTariffEditor({ title, value, onChange }: { title: string; value: Tariff; onChange: (t: Tariff) => void }) {
+  return <details className="min-w-0 rounded-xl border border-border p-4" open={title.includes("1")}>
+    <summary className="cursor-pointer font-medium">{title} — meter-specific</summary>
+    <p className="mt-2 text-sm text-muted">Only settings that can differ between the physical meters belong here.</p>
+    <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2">
+      <Field label="Sanctioned load (kW)" value={value.sanctionedLoadKw} type="number" step="0.01" onChange={(v) => onChange({ ...value, sanctionedLoadKw: Number(v) })} />
+    </div>
   </details>;
 }
+
 function dataForBackup() { const s = useMonitor.getState(); return { readings: s.readings, collections: s.collections, history: s.history, notes: s.notes, general: s.general, tariff1: s.tariff1, tariff2: s.tariff2 }; }
 export function SettingsView() {
   const general = useMonitor((s) => s.general); const t1 = useMonitor((s) => s.tariff1); const t2 = useMonitor((s) => s.tariff2); const saveGeneral = useMonitor((s) => s.saveGeneral); const saveTariffs = useMonitor((s) => s.saveTariffs); const replaceData = useMonitor((s) => s.replaceData); const markDirty = useMonitor((s) => s.markDirty); const resetDemo = useMonitor((s) => s.resetDemo);
@@ -72,7 +84,7 @@ export function SettingsView() {
     {tab === "data" && <div><h2 className="font-display text-2xl font-medium">Data & backup</h2><p className="mt-1 text-sm text-muted">All monitor data is stored server-side. CSV imports add readings without replacing the rest of the application data.</p><div className="mt-5 grid min-w-0 gap-3 sm:grid-cols-2"><div className="min-w-0 rounded-xl border border-border p-4"><p className="font-medium">Full application backup</p><p className="mt-1 text-sm text-muted">Readings, collections, history, notes, settings and tariffs.</p><div className="mt-3 flex flex-wrap gap-2"><Button onClick={exportAll}>Export all data</Button><Button variant="outline" onClick={() => fileRef.current?.click()}>Import backup</Button></div></div><div className="min-w-0 rounded-xl border border-border p-4"><p className="font-medium">Readings CSV</p><p className="mt-1 text-sm text-muted">Exchange readings with Excel or Google Sheets. Duplicate rows are skipped.</p><div className="mt-3 flex flex-wrap gap-2"><Button variant="outline" onClick={exportCsv}>Export readings CSV</Button><Button variant="outline" onClick={() => fileRef.current?.click()}>Import readings CSV</Button></div></div></div><input ref={fileRef} type="file" accept=".json,.csv,application/json,text/csv" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) void handleImport(file); }} /></div>}
     {tab === "general" && <div><h2 className="font-display text-2xl font-medium">General</h2><p className="mt-1 text-sm text-muted">Monitoring target, billing boundary and solar window.</p><div className="mt-5 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3"><Field label="Goal ceiling" type="number" value={g.goalCombinedUnits} onChange={(v) => setG({ ...g, goalCombinedUnits: Number(v) })} /><Field label="Billing date" type="number" value={g.billingDay} onChange={(v) => setG({ ...g, billingDay: Number(v) })} /><TimeField label="Billing time" hour={g.billingHour} minute={g.billingMinute} onChange={(hour, minute) => setG({ ...g, billingHour: hour, billingMinute: minute })} /><RangeField label="Solar hours" from={g.solarStartHour} to={g.solarEndHour} onFromChange={(v) => setG({ ...g, solarStartHour: v })} onToChange={(v) => setG({ ...g, solarEndHour: v })} /></div><Button className="mt-5" onClick={() => { saveGeneral(g); setStatus("General settings saved."); }}>Save general</Button></div>}
     {tab === "appearance" && <div><h2 className="font-display text-2xl font-medium">Appearance</h2><p className="mt-1 text-sm text-muted">Interface theme and meter colors.</p><div className="mt-5 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3"><div className="min-w-0"><Label>Theme</Label><select className="mt-1 h-10 w-full min-w-0 rounded-md border border-border bg-background px-3 text-sm" value={g.theme} onChange={(e) => setG({ ...g, theme: e.target.value as GeneralSettings["theme"] })}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div><div className="min-w-0"><Label>Meter 1 color</Label><div className="mt-1 flex min-w-0 gap-2"><input className="h-10 w-12 shrink-0 cursor-pointer rounded-md border border-border bg-background p-1" type="color" value={g.meter1Color} onChange={(e) => setG({ ...g, meter1Color: e.target.value })} /><Input className="min-w-0 w-full" value={g.meter1Color} onChange={(e) => setG({ ...g, meter1Color: e.target.value })} /></div></div><div className="min-w-0"><Label>Meter 2 color</Label><div className="mt-1 flex min-w-0 gap-2"><input className="h-10 w-12 shrink-0 cursor-pointer rounded-md border border-border bg-background p-1" type="color" value={g.meter2Color} onChange={(e) => setG({ ...g, meter2Color: e.target.value })} /><Input className="min-w-0 w-full" value={g.meter2Color} onChange={(e) => setG({ ...g, meter2Color: e.target.value })} /></div></div></div><Button className="mt-5" onClick={() => { saveGeneral(g); setStatus("Appearance settings saved."); }}>Save appearance</Button></div>}
-    {tab === "tariffs" && <div><h2 className="font-display text-2xl font-medium">Tariff schedule</h2><p className="mt-1 text-sm text-muted">MEPCO A-1 residential slabs. Each meter remains independently configured.</p><div className="mt-5 min-w-0 space-y-3"><TariffEditor title="Meter 1" value={a} onChange={setA} /><TariffEditor title="Meter 2" value={b} onChange={setB} /></div><div className="mt-5 flex flex-wrap gap-3"><Button onClick={() => { saveTariffs(a, b); setStatus("Tariff schedule saved."); }}>Save tariff schedule</Button><Button variant="outline" onClick={restoreDemo}>Restore demo data</Button></div></div>}
+    {tab === "tariffs" && <div><h2 className="font-display text-2xl font-medium">Tariff schedule</h2><p className="mt-1 text-sm text-muted">MEPCO A-1 residential slabs. Each meter remains independently configured.</p><div className="mt-5 min-w-0 space-y-3"><CommonTariffEditor value={a} onChange={(next) => { setA(next); setB({ ...next, sanctionedLoadKw: b.sanctionedLoadKw }); }} /><MeterTariffEditor title="Meter 1" value={a} onChange={setA} /><MeterTariffEditor title="Meter 2" value={b} onChange={setB} /></div><div className="mt-5 flex flex-wrap gap-3"><Button onClick={() => { saveTariffs(a, b); setStatus("Tariff schedule saved."); }}>Save tariff schedule</Button><Button variant="outline" onClick={restoreDemo}>Restore demo data</Button></div></div>}
     {tab === "versions" && <div><h2 className="font-display text-2xl font-medium">Previous versions</h2><p className="mt-1 text-sm text-muted">Keep shortcuts to older versions of the monitor without mixing them with current appearance settings.</p><div className="mt-5 rounded-xl border border-border p-4"><p className="font-medium">V1 Electricity Monitor</p><p className="mt-1 text-sm text-muted">Open the previous version as a fallback when you need the older interface or workflow.</p><div className="mt-4"><Field label="Previous version URL" value={g.v1Url} onChange={(v) => setG({ ...g, v1Url: v })} /></div><Button className="mt-4" onClick={() => { saveGeneral(g); setStatus("Previous version link saved."); }}>Save previous version</Button></div></div>}
     {status ? <p className="mt-5 rounded-lg bg-background px-3 py-2 text-sm" role="status">{status}</p> : null}
   </div></div></section></div>;
