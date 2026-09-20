@@ -31,16 +31,15 @@ function interpolateMeter(
   if (!before || before[key] == null) return null;
   if (before.datetime === target.getTime()) return before[key];
   if (!after || after[key] == null || after.datetime <= before.datetime) return before[key];
+
   const b = before[key] as number;
   const a = after[key] as number;
   if (a < b) return null;
-  const fraction = Math.max(0, Math.min(1,
-    (target.getTime() - before.datetime) / (after.datetime - before.datetime),
-  ));
-  return b + (a - b) * fraction;
-  }
-  const targetWeight = profileWeightBetween(beforeDt, target);
-  const fraction = Math.max(0, Math.min(1, targetWeight / totalWeight));
+
+  const fraction = Math.max(
+    0,
+    Math.min(1, (target.getTime() - before.datetime) / (after.datetime - before.datetime)),
+  );
   return b + (a - b) * fraction;
 }
 
@@ -48,6 +47,7 @@ export function interpolatedReadingsAt(readings: CarriedReading[], boundary: Dat
   let before: CarriedReading | null = null;
   let after: CarriedReading | null = null;
   const t = boundary.getTime();
+
   for (const r of readings) {
     if (r.datetime <= t) {
       if (r.newReading != null || r.oldReading != null) before = r;
@@ -56,6 +56,7 @@ export function interpolatedReadingsAt(readings: CarriedReading[], boundary: Dat
       break;
     }
   }
+
   return {
     newReading: interpolateMeter(before, after, boundary, "new"),
     oldReading: interpolateMeter(before, after, boundary, "old"),
@@ -66,11 +67,13 @@ export function readingsAtOrBefore(readings: CarriedReading[], boundary: Date) {
   let newReading: number | null = null;
   let oldReading: number | null = null;
   const t = boundary.getTime();
+
   for (const r of readings) {
     if (r.datetime > t) break;
     if (r.newReading != null) newReading = r.newReading;
     if (r.oldReading != null) oldReading = r.oldReading;
   }
+
   return { newReading, oldReading };
 }
 
@@ -83,6 +86,7 @@ export function estimateReadingAt(
   let after: CarriedReading | null = null;
   const key = meter === "new" ? "newReading" : "oldReading";
   const t = target.getTime();
+
   for (const r of readings) {
     if (r.datetime <= t && r[key] != null) before = r;
     if (r.datetime > t && r[key] != null) {
@@ -90,5 +94,6 @@ export function estimateReadingAt(
       break;
     }
   }
+
   return interpolateMeter(before, after, target, meter);
 }
