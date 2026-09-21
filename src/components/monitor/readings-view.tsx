@@ -5,6 +5,7 @@ import { units } from "@/lib/engine/time";
 import { extractMeterReading, type MeterReadingResult } from "@/lib/meter-vision";
 import { loadMeterIdentities, loadMeterImageReferences, saveMeterImage, listMeterImages, attachMeterImage, deleteMeterImage, type MeterImage } from "@/lib/storage/meter-images";
 import { driveStatus, driveFolderInfo, loadDriveImage } from "@/lib/storage/google-drive";
+import { processRawMRFolder, type RawImportResult } from "@/lib/storage/raw-meter-import";
 import { useMonitor } from "@/store/monitor";
 
 function clamp(n: number, min: number, max: number) { return Math.max(min, Math.min(max, n)); }
@@ -194,6 +195,69 @@ function BulkUploadModal({ readings, onClose }: { readings: ReturnType<typeof us
   </div></div>;
 }
 
+function RawMRModal({ readings, onClose }: { readings: ReturnType<typeof useMonitor.getState>["readings"]; onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<RawImportResult | null>(null);
+  const [error, setError] = useState("");
+  const [folderUrl, setFolderUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    void driveFolderInfo().then((x) => setFolderUrl(x.url)).catch(() => setFolderUrl(null));
+  }, []);
+
+  async function process() {
+    if (busy) return;
+    const status = await driveStatus();
+    if (!status.connected) { window.location.href = "/api/drive/connect"; return; }
+    setBusy(true); setError(""); setResult(null);
+    try {
+      setResult(await processRawMRFolder({
+        data: {
+          readings: readings.map((r) => ({
+            id: r.id,
+            datetime: r.datetime,
+            newInput: r.newInput ?? null,
+            oldInput: r.oldInput ?? null,
+          })),
+        },
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not process the MR folder.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+    <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-elevated p-5 shadow-border">
+      <div className="flex items-center justify-between">
+        <div><h2 className="font-display text-2xl font-medium">Process MR folder</h2><p className="mt-1 text-sm text-muted">MR stays untouched. The app reads each raw image, identifies the meter, matches its capture time to the nearest reading, and creates an organized copy in EM_DATA.</p></div>
+        <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
+      </div>
+      <div className="mt-4 rounded-xl border border-border bg-background p-3">
+        <p className="text-sm"><strong>Source:</strong> Google Drive / MR</p>
+        <p className="text-sm"><strong>Destination:</strong> EM_DATA / Meter Readings / Meter 1, Meter 2, or Unrelated</p>
+        {folderUrl && <a href={folderUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm underline">Open EM_DATA</a>}
+      </div>
+      {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+      {busy && <p className="mt-3 text-sm">Processing raw images… This may take time because each image is scanned before it is organized.</p>}
+      {result && <div className="mt-4 rounded-xl border border-border p-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div><p className="text-xs text-muted">Raw images</p><p className="text-xl font-medium">{result.total}</p></div>
+          <div><p className="text-xs text-muted">Processed</p><p className="text-xl font-medium">{result.processed}</p></div>
+          <div><p className="text-xs text-muted">Attached</p><p className="text-xl font-medium">{result.attached}</p></div>
+          <div><p className="text-xs text-muted">Review</p><p className="text-xl font-medium">{result.review}</p></div>
+        </div>
+        {result.failed > 0 && <p className="mt-3 text-sm text-danger">{result.failed} images failed and were not copied.</p>}
+        <div className="mt-4 max-h-64 overflow-y-auto space-y-1 text-xs">
+          {result.items.map((item) => <div key={item.sourceId} className="flex gap-2 border-t border-border py-1.5"><span className="min-w-0 flex-1 truncate">{item.sourceName}</span><span>{item.meter === "m1" ? "M1" : item.meter === "m2" ? "M2" : "Review"}</span><span>{item.value ?? "—"}</span><span>{item.error ? "Failed" : item.readingId ? "Attached" : "Review"}</span></div>)}
+        </div>
+      </div>}
+      <div className="mt-5 flex justify-end gap-2"><Button variant="outline" onClick={onClose}>Close</Button><Button disabled={busy} onClick={() => void process()}>{busy ? "Processing…" : "Process MR folder"}</Button></div>
+    </div>
+  </div>;
+}
+
 function ImageManager({ reading, onClose }: { reading: ReturnType<typeof useMonitor.getState>["readings"][number]; onClose: () => void }) {
   const [images, setImages] = useState<MeterImage[]>([]);
   const [storageOpen, setStorageOpen] = useState(false);
@@ -217,6 +281,7 @@ export function ReadingsView() {
   const deleteReading = useMonitor((s) => s.deleteReading);
   const [modalOpen, setModalOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [rawMROpen, setRawMROpen] = useState(false);
   const [imageReading, setImageReading] = useState<ReturnType<typeof useMonitor.getState>["readings"][number] | null>(null);
   const [meterImages, setMeterImages] = useState<MeterImage[]>([]);
   const sorted = useMemo(() => [...readings].sort((a, b) => b.datetime - a.datetime), [readings]);
@@ -229,11 +294,12 @@ export function ReadingsView() {
     <div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div><h2 className="font-display text-2xl font-medium">Readings</h2><p className="mt-1 text-sm text-muted">Take a meter photo, confirm the detected reading, and add it.</p></div>
-        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setBulkOpen(true)}>Bulk upload images</Button><Button onClick={() => setModalOpen(true)}>Add reading</Button></div>
+        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setRawMROpen(true)}>Process MR folder</Button><Button variant="outline" onClick={() => setBulkOpen(true)}>Bulk upload images</Button><Button onClick={() => setModalOpen(true)}>Add reading</Button></div>
       </div>
     </div>
     {modalOpen && <AddReadingModal onClose={() => setModalOpen(false)} />}
     {bulkOpen && <BulkUploadModal readings={readings} onClose={() => setBulkOpen(false)} />}
+    {rawMROpen && <RawMRModal readings={readings} onClose={() => { setRawMROpen(false); void listMeterImages().then(setMeterImages).catch(() => {}); }} />}
     {imageReading && <ImageManager reading={imageReading} onClose={() => { setImageReading(null); void listMeterImages().then(setMeterImages).catch(() => {}); }} />}
     <div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
       <div className="flex items-center justify-between"><h3 className="font-display text-xl font-medium">Recent readings</h3><span className="text-sm text-muted">{readings.length} total</span></div>
