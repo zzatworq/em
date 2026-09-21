@@ -97,6 +97,22 @@ export class MonitorState extends DurableObject {
       return Response.json({ ok: true });
     }
 
+    if (url.pathname === "/drive/oauth-state" && method === "GET") {
+      return Response.json({ oauthState: await this.ctx.storage.get<string>("drive_oauth_state") ?? null });
+    }
+    if (url.pathname === "/drive/oauth-state" && method === "PUT") {
+      const body = await request.json() as { state: string; expiresAt: number };
+      if (!body.state || !Number.isFinite(body.expiresAt)) {
+        return new Response("Invalid OAuth state", { status: 400 });
+      }
+      await this.ctx.storage.put("drive_oauth_state", JSON.stringify(body));
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/drive/oauth-state" && method === "DELETE") {
+      await this.ctx.storage.delete("drive_oauth_state");
+      return Response.json({ ok: true });
+    }
+
     if (url.pathname === "/drive/token" && method === "GET") {
       return Response.json({ refreshToken: await this.ctx.storage.get<string>("drive_refresh_token") ?? null });
     }
