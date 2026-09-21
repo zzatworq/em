@@ -5,7 +5,7 @@ import { units } from "@/lib/engine/time";
 import { extractMeterReading, type MeterReadingResult } from "@/lib/meter-vision";
 import { loadMeterIdentities, loadMeterImageReferences, saveMeterImage, listMeterImages, attachMeterImage, deleteMeterImage, type MeterImage } from "@/lib/storage/meter-images";
 import { driveStatus, driveFolderInfo, loadDriveImage } from "@/lib/storage/google-drive";
-import { useMonitor } from "@/store/monitor";
+import { useDashboard, useMonitor } from "@/store/monitor";
 
 function clamp(n: number, min: number, max: number) { return Math.max(min, Math.min(max, n)); }
 async function fileToDataUrl(file: File): Promise<string> { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result as string); reader.onerror = () => reject(new Error("Could not read the image file.")); reader.readAsDataURL(file); }); }
@@ -215,15 +215,63 @@ function ImageManager({ reading, onClose }: { reading: ReturnType<typeof useMoni
 export function ReadingsView() {
   const readings = useMonitor((s) => s.readings);
   const deleteReading = useMonitor((s) => s.deleteReading);
+  const selectedMonth = useMonitor((s) => s.selectedMonth);
+  const { dashboard } = useDashboard();
   const [modalOpen, setModalOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [imageReading, setImageReading] = useState<ReturnType<typeof useMonitor.getState>["readings"][number] | null>(null);
   const [meterImages, setMeterImages] = useState<MeterImage[]>([]);
+  const [meterFilter, setMeterFilter] = useState<"all" | "m1" | "m2">("all");
+  const [imageFilter, setImageFilter] = useState<"all" | "with" | "without">("all");
+  const [search, setSearch] = useState("");
+  const [showAll, setShowAll] = useState(false);
+
   const sorted = useMemo(() => [...readings].sort((a, b) => b.datetime - a.datetime), [readings]);
 
   useEffect(() => {
     void listMeterImages().then(setMeterImages).catch(() => setMeterImages([]));
   }, []);
+
+  // Changing the existing top month selector always returns the table to
+  // that billing period. "Show all" is an explicit temporary override.
+  useEffect(() => {
+    setShowAll(false);
+  }, [selectedMonth]);
+
+  const periodStart = dashboard?.billingStartDate?.getTime?.() ?? null;
+  const periodEnd = dashboard?.billingEndDate?.getTime?.() ?? null;
+
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    return sorted.filter((r) => {
+      const inPeriod = periodStart != null && periodEnd != null
+        ? r.datetime >= periodStart && r.datetime < periodEnd
+        : true;
+      if (!showAll && !inPeriod) return false;
+
+      const images = meterImages.filter((image) => image.readingId === r.id && image.driveFileId);
+      if (imageFilter === "with" && images.length === 0) return false;
+      if (imageFilter === "without" && images.length > 0) return false;
+
+      if (meterFilter === "m1" && r.newInput == null) return false;
+      if (meterFilter === "m2" && r.oldInput == null) return false;
+
+      if (query) {
+        const when = new Date(r.datetime).toLocaleString("en-GB").toLowerCase();
+        const meter1 = r.newInput == null ? "" : String(r.newInput);
+        const meter2 = r.oldInput == null ? "" : String(r.oldInput);
+        const load = r.loadKw == null ? "" : String(r.loadKw);
+        if (![when, meter1, meter2, load].some((value) => value.includes(query))) return false;
+      }
+
+      return true;
+    });
+  }, [sorted, periodStart, periodEnd, showAll, meterImages, meterFilter, imageFilter, search]);
+
+  const periodLabel = dashboard?.billingStartDate && dashboard?.billingEndDate
+    ? `${dashboard.billingStartDate.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })} → ${dashboard.billingEndDate.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })}`
+    : "";
 
   return <section className="space-y-5">
     <div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
@@ -232,30 +280,81 @@ export function ReadingsView() {
         <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setBulkOpen(true)}>Bulk upload images</Button><Button onClick={() => setModalOpen(true)}>Add reading</Button></div>
       </div>
     </div>
+
     {modalOpen && <AddReadingModal onClose={() => setModalOpen(false)} />}
     {bulkOpen && <BulkUploadModal readings={readings} onClose={() => setBulkOpen(false)} />}
     {imageReading && <ImageManager reading={imageReading} onClose={() => { setImageReading(null); void listMeterImages().then(setMeterImages).catch(() => {}); }} />}
+
     <div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
-      <div className="flex items-center justify-between"><h3 className="font-display text-xl font-medium">Recent readings</h3><span className="text-sm text-muted">{readings.length} total</span></div>
-      <div className="mt-5 overflow-x-auto">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h3 className="font-display text-xl font-medium">{showAll ? "All readings" : "Readings for billing period"}</h3>
+          <p className="mt-1 text-sm text-muted">{showAll ? `${filtered.length} matching readings` : periodLabel ? `${periodLabel} · ${filtered.length} matching readings` : `${filtered.length} matching readings`}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-4">
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium uppercase tracking-wider text-muted">Meter</span>
+          <select value={meterFilter} onChange={(e) => setMeterFilter(e.target.value as typeof meterFilter)} className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none">
+            <option value="all">All meters</option>
+            <option value="m1">Meter 1</option>
+            <option value="m2">Meter 2</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium uppercase tracking-wider text-muted">Images</span>
+          <select value={imageFilter} onChange={(e) => setImageFilter(e.target.value as typeof imageFilter)} className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none">
+            <option value="all">All readings</option>
+            <option value="with">With images</option>
+            <option value="without">Without images</option>
+          </select>
+        </label>
+        <label className="block md:col-span-2">
+          <span className="mb-1 block text-xs font-medium uppercase tracking-wider text-muted">Search</span>
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Date, reading or load…" />
+        </label>
+      </div>
+
+      <div className="mt-3 flex justify-end">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => { setMeterFilter("all"); setImageFilter("all"); setSearch(""); }}
+          disabled={meterFilter === "all" && imageFilter === "all" && !search}
+        >
+          Reset filters
+        </Button>
+      </div>
+
+      <div className="mt-2 overflow-x-auto">
         <table className="w-full min-w-[48rem] text-sm">
           <thead><tr className="text-left text-xs uppercase tracking-wider text-muted">
             <th className="pb-2 font-medium">When</th><th className="pb-2 text-right font-medium">Meter 1</th><th className="pb-2 text-right font-medium">Meter 2</th><th className="pb-2 text-right font-medium">Load</th><th className="pb-2 font-medium">Images</th><th className="pb-2 font-medium"></th>
           </tr></thead>
-          <tbody>{sorted.slice(0, 80).map((r) => {
-            const images = meterImages.filter((image) => image.readingId === r.id && image.driveFileId);
-            return <tr key={r.id} className="border-t border-border">
-              <td className="py-2.5">{new Date(r.datetime).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })}</td>
-              <td className="py-2.5 text-right tabular-nums">{units(r.newInput)}</td>
-              <td className="py-2.5 text-right tabular-nums">{units(r.oldInput)}</td>
-              <td className="py-2.5 text-right tabular-nums">{units(r.loadKw)}</td>
-              <td className="py-2.5">
-                {images.length ? <div className="flex flex-wrap gap-2">{images.map((image, index) => <a key={image.id} href={`https://drive.google.com/file/d/${encodeURIComponent(image.driveFileId!)}/view`} target="_blank" rel="noreferrer" className="underline">Image {index + 1}</a>)}</div> : <span className="text-muted">—</span>}
-              </td>
-              <td className="py-2.5 text-right"><div className="flex justify-end gap-1"><Button variant="ghost" size="sm" onClick={() => setImageReading(r)}>Edit</Button><Button variant="ghost" size="sm" onClick={() => deleteReading(r.id)}>Remove</Button></div></td>
-            </tr>;
-          })}</tbody>
+          <tbody>
+            {filtered.map((r) => {
+              const images = meterImages.filter((image) => image.readingId === r.id && image.driveFileId);
+              return <tr key={r.id} className="border-t border-border">
+                <td className="py-2.5">{new Date(r.datetime).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" })}</td>
+                <td className="py-2.5 text-right tabular-nums">{units(r.newInput)}</td>
+                <td className="py-2.5 text-right tabular-nums">{units(r.oldInput)}</td>
+                <td className="py-2.5 text-right tabular-nums">{units(r.loadKw)}</td>
+                <td className="py-2.5">
+                  {images.length ? <div className="flex flex-wrap gap-2">{images.map((image, index) => <a key={image.id} href={`https://drive.google.com/file/d/${encodeURIComponent(image.driveFileId!)}/view`} target="_blank" rel="noreferrer" className="underline">Image {index + 1}</a>)}</div> : <span className="text-muted">—</span>}
+                </td>
+                <td className="py-2.5 text-right"><div className="flex justify-end gap-1"><Button variant="ghost" size="sm" onClick={() => setImageReading(r)}>Edit</Button><Button variant="ghost" size="sm" onClick={() => deleteReading(r.id)}>Remove</Button></div></td>
+              </tr>;
+            })}
+          </tbody>
         </table>
+        {!filtered.length && <div className="py-10 text-center text-sm text-muted">No readings match the current filters.</div>}
+      </div>
+
+      <div className="mt-5 flex justify-center border-t border-border pt-4">
+        <Button variant="outline" onClick={() => setShowAll((value) => !value)}>
+          {showAll ? "Show Selected Billing Period" : "Show All Readings"}
+        </Button>
       </div>
     </div>
   </section>;
