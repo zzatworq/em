@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { units } from "@/lib/engine/time";
 import { extractMeterReading, type MeterReadingResult } from "@/lib/meter-vision";
-import { loadMeterIdentities, loadMeterImageReferences, saveMeterImage } from "@/lib/storage/meter-images";
+import { loadMeterIdentities, loadMeterImageReferences, saveMeterImage, listMeterImages, attachMeterImage, deleteMeterImage, type MeterImage } from "@/lib/storage/meter-images";
+import { driveStatus, loadDriveImage } from "@/lib/storage/google-drive";
 import { useMonitor } from "@/store/monitor";
 
 function clamp(n: number, min: number, max: number) { return Math.max(min, Math.min(max, n)); }
@@ -32,7 +33,87 @@ function AddReadingModal({ onClose }: { onClose: () => void }) {
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"><div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-elevated p-5 shadow-border sm:p-6"><div className="flex items-center justify-between"><h2 className="font-display text-2xl font-medium">Add reading</h2><Button variant="ghost" size="sm" onClick={onClose}>Close</Button></div><p className="mt-1 text-sm text-muted">Take a photo of either meter. The app corrects camera rotation, crops the numeric display, detects the meter and reading, then lets you confirm before saving.</p><div className="mt-4"><MeterScanner scan={scan} onPhoto={handlePhoto} onValueChange={(v) => { setScan((prev) => ({ ...prev, value: v })); if (scan.detectedMeter === "m1") setM1(v); if (scan.detectedMeter === "m2") setM2(v); }} onChoose={chooseMeter} /></div><div className="mt-4 grid gap-3 sm:grid-cols-2"><div className="rounded-xl border border-border p-3"><p className="mb-2 text-sm font-medium">Meter 1</p><Input type="number" step="0.01" value={m1} onChange={(e) => setM1(e.target.value)} /></div><div className="rounded-xl border border-border p-3"><p className="mb-2 text-sm font-medium">Meter 2</p><Input type="number" step="0.01" value={m2} onChange={(e) => setM2(e.target.value)} /></div></div><div className="mt-4 grid gap-3 sm:grid-cols-3"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Date" /><Input type="time" value={time} onChange={(e) => setTime(e.target.value)} aria-label="Time" /><Input type="number" step="0.01" placeholder="Inverter kW" value={load} onChange={(e) => setLoad(e.target.value)} /></div><div className="mt-5 flex justify-end gap-2"><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={handleSave} disabled={scanning || scan.needsChoice}>{scanning ? "Reading meter…" : scan.needsChoice ? "Choose meter first" : "Add reading"}</Button></div></div></div>;
 }
 
+
+function nearestReadingId(readings: ReturnType<typeof useMonitor.getState>["readings"], timestamp: number) {
+  const ordered = [...readings].sort((a, b) => a.datetime - b.datetime);
+  if (!ordered.length) return null;
+  let best: typeof ordered[number] | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < ordered.length; i++) {
+    const r = ordered[i];
+    const prevGap = i > 0 ? r.datetime - ordered[i - 1].datetime : Number.POSITIVE_INFINITY;
+    const nextGap = i + 1 < ordered.length ? ordered[i + 1].datetime - r.datetime : Number.POSITIVE_INFINITY;
+    const bracket = Math.min(prevGap, nextGap) / 2;
+    const distance = Math.abs(timestamp - r.datetime);
+    if (distance <= bracket && distance < bestDistance) { best = r; bestDistance = distance; }
+  }
+  return best?.id ?? null;
+}
+
+function ImageThumb({ driveFileId, alt }: { driveFileId: string; alt: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useMemo(() => { void loadDriveImage({ data: { id: driveFileId } }).then((x) => setSrc(`data:${x.mimeType};base64,${x.base64}`)).catch(() => setSrc(null)); }, [driveFileId]);
+  return src ? <img src={src} alt={alt} className="h-20 w-20 rounded-lg object-cover bg-background" /> : <div className="h-20 w-20 rounded-lg bg-background" />;
+}
+
+function BulkUploadModal({ readings, onClose }: { readings: ReturnType<typeof useMonitor.getState>["readings"]; onClose: () => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  async function upload() {
+    if (!files.length || busy) return;
+    const status = await driveStatus({});
+    if (!status.connected) { window.location.href = "/api/drive/connect"; return; }
+    setBusy(true); setMessage("");
+    let attached = 0, unrelated = 0;
+    for (const file of files) {
+      try {
+        const base64 = await normalizeImage(file);
+        const readingId = nearestReadingId(readings, file.lastModified);
+        const uploaded = await saveMeterImage({ data: {
+          id: `img-${crypto.randomUUID()}`,
+          meter: "m1",
+          readingId,
+          imageCreatedAt: file.lastModified,
+          status: readingId ? "attached" : "unrelated",
+          imageBase64: base64,
+        }});
+        if (uploaded.ok) readingId ? attached++ : unrelated++;
+      } catch { unrelated++; }
+      setMessage(`Uploaded ${attached + unrelated} / ${files.length} · ${attached} attached · ${unrelated} unrelated`);
+    }
+    setBusy(false);
+  }
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"><div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-elevated p-5 shadow-border">
+    <div className="flex items-center justify-between"><h2 className="font-display text-2xl font-medium">Bulk upload images</h2><Button variant="ghost" size="sm" onClick={onClose}>Close</Button></div>
+    <p className="mt-1 text-sm text-muted">Images are matched to the nearest reading using the file timestamp. Images outside a reading bracket become unrelated.</p>
+    <input ref={inputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
+    <div className="mt-4 rounded-xl border border-dashed border-border p-6 text-center"><Button variant="outline" onClick={() => inputRef.current?.click()}>Choose images</Button><p className="mt-2 text-sm text-muted">{files.length ? `${files.length} images selected` : "Select multiple meter photos"}</p></div>
+    {message && <p className="mt-3 text-sm">{message}</p>}
+    <div className="mt-5 flex justify-end gap-2"><Button variant="outline" onClick={onClose}>Cancel</Button><Button disabled={!files.length || busy} onClick={() => void upload()}>{busy ? "Uploading…" : "Bulk upload images"}</Button></div>
+  </div></div>;
+}
+
+function ImageManager({ reading, onClose }: { reading: ReturnType<typeof useMonitor.getState>["readings"][number]; onClose: () => void }) {
+  const [images, setImages] = useState<MeterImage[]>([]);
+  const [storageOpen, setStorageOpen] = useState(false);
+  async function refresh() { setImages(await listMeterImages({})); }
+  useMemo(() => { void refresh(); }, []);
+  const attached = images.filter((x) => x.readingId === reading.id);
+  const available = images.filter((x) => !x.readingId);
+  async function remove(image: MeterImage) { await attachMeterImage({ data: { id: image.id, readingId: null, status: "unrelated" } }); await refresh(); }
+  async function discard(image: MeterImage) { await deleteMeterImage({ data: { id: image.id, driveFileId: image.driveFileId } }); await refresh(); }
+  async function attach(image: MeterImage) { await attachMeterImage({ data: { id: image.id, readingId: reading.id, status: "attached" } }); await refresh(); setStorageOpen(false); }
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"><div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-elevated p-5 shadow-border">
+    <div className="flex items-center justify-between"><div><h2 className="font-display text-2xl font-medium">Reading images</h2><p className="text-sm text-muted">{new Date(reading.datetime).toLocaleString()}</p></div><Button variant="ghost" size="sm" onClick={onClose}>Close</Button></div>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2">{attached.map((image) => <div key={image.id} className="flex items-center gap-3 rounded-xl border border-border p-3"><ImageThumb driveFileId={image.driveFileId!} alt={image.id} /><div className="min-w-0 flex-1"><p className="truncate text-sm">{new Date(image.imageCreatedAt ?? image.createdAt).toLocaleString()}</p><div className="mt-2 flex gap-2"><Button size="sm" variant="outline" onClick={() => void remove(image)}>Remove</Button><Button size="sm" variant="ghost" onClick={() => void discard(image)}>Discard</Button></div></div></div>)}</div>
+    <Button className="mt-4" variant="outline" onClick={() => setStorageOpen((v) => !v)}>+ Add from image storage</Button>
+    {storageOpen && <div className="mt-3 rounded-xl border border-border p-3"><p className="mb-2 text-sm font-medium">Unattached images</p>{available.length ? <div className="grid gap-2 sm:grid-cols-2">{available.map((image) => <button key={image.id} type="button" className="flex items-center gap-3 rounded-lg border border-border p-2 text-left hover:bg-background" onClick={() => void attach(image)}><ImageThumb driveFileId={image.driveFileId!} alt={image.id} /><span className="text-xs">{new Date(image.imageCreatedAt ?? image.createdAt).toLocaleString()}</span></button>)}</div> : <p className="text-sm text-muted">No unattached images.</p>}</div>}
+  </div></div>;
+}
+
 export function ReadingsView() {
-  const readings = useMonitor((s) => s.readings); const deleteReading = useMonitor((s) => s.deleteReading); const [modalOpen, setModalOpen] = useState(false); const sorted = useMemo(() => [...readings].sort((a, b) => b.datetime - a.datetime), [readings]);
-  return <section className="space-y-5"><div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-display text-2xl font-medium">Readings</h2><p className="mt-1 text-sm text-muted">Take a meter photo, confirm the detected reading, and add it.</p></div><Button onClick={() => setModalOpen(true)}>Add reading</Button></div></div>{modalOpen && <AddReadingModal onClose={() => setModalOpen(false)} />}<div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6"><div className="flex items-center justify-between"><h3 className="font-display text-xl font-medium">Recent readings</h3><span className="text-sm text-muted">{readings.length} total</span></div><div className="mt-5 overflow-x-auto"><table className="w-full min-w-[40rem] text-sm"><thead><tr className="text-left text-xs uppercase tracking-wider text-muted"><th className="pb-2 font-medium">When</th><th className="pb-2 text-right font-medium">Meter 1</th><th className="pb-2 text-right font-medium">Meter 2</th><th className="pb-2 text-right font-medium">Load</th><th className="pb-2 font-medium"></th></tr></thead><tbody>{sorted.slice(0, 80).map((r) => <tr key={r.id} className="border-t border-border"><td className="py-2.5">{new Date(r.datetime).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })}</td><td className="py-2.5 text-right tabular-nums">{units(r.newInput)}</td><td className="py-2.5 text-right tabular-nums">{units(r.oldInput)}</td><td className="py-2.5 text-right tabular-nums">{units(r.loadKw)}</td><td className="py-2.5 text-right"><Button variant="ghost" size="sm" onClick={() => deleteReading(r.id)}>Remove</Button></td></tr>)}</tbody></table></div></div></section>;
+  const readings = useMonitor((s) => s.readings); const deleteReading = useMonitor((s) => s.deleteReading); const [modalOpen, setModalOpen] = useState(false); const [bulkOpen, setBulkOpen] = useState(false); const [imageReading, setImageReading] = useState<ReturnType<typeof useMonitor.getState>["readings"][number] | null>(null); const sorted = useMemo(() => [...readings].sort((a, b) => b.datetime - a.datetime), [readings]);
+  return <section className="space-y-5"><div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-display text-2xl font-medium">Readings</h2><p className="mt-1 text-sm text-muted">Take a meter photo, confirm the detected reading, and add it.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setBulkOpen(true)}>Bulk upload images</Button><Button onClick={() => setModalOpen(true)}>Add reading</Button></div></div></div>{modalOpen && <AddReadingModal onClose={() => setModalOpen(false)} />}{bulkOpen && <BulkUploadModal readings={readings} onClose={() => setBulkOpen(false)} />}{imageReading && <ImageManager reading={imageReading} onClose={() => setImageReading(null)} />}<div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6"><div className="flex items-center justify-between"><h3 className="font-display text-xl font-medium">Recent readings</h3><span className="text-sm text-muted">{readings.length} total</span></div><div className="mt-5 overflow-x-auto"><table className="w-full min-w-[40rem] text-sm"><thead><tr className="text-left text-xs uppercase tracking-wider text-muted"><th className="pb-2 font-medium">When</th><th className="pb-2 text-right font-medium">Meter 1</th><th className="pb-2 text-right font-medium">Meter 2</th><th className="pb-2 text-right font-medium">Load</th><th className="pb-2 font-medium"></th></tr></thead><tbody>{sorted.slice(0, 80).map((r) => <tr key={r.id} className="border-t border-border"><td className="py-2.5">{new Date(r.datetime).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })}</td><td className="py-2.5 text-right tabular-nums">{units(r.newInput)}</td><td className="py-2.5 text-right tabular-nums">{units(r.oldInput)}</td><td className="py-2.5 text-right tabular-nums">{units(r.loadKw)}</td><td className="py-2.5 text-right"><div className="flex justify-end gap-1"><Button variant="ghost" size="sm" onClick={() => setImageReading(r)}>Images</Button><Button variant="ghost" size="sm" onClick={() => deleteReading(r.id)}>Remove</Button></div></td></tr>)}</tbody></table></div></div></section>;
 }
