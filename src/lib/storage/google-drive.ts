@@ -28,6 +28,7 @@ async function accessToken() {
   if (!refreshToken) throw new Error("Google Drive is not connected. Connect Google Drive first.");
   const clientId = env.GOOGLE_CLIENT_ID;
   const clientSecret = env.GOOGLE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) throw new Error("Google Drive OAuth secrets are not configured.");
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
