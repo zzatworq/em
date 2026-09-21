@@ -131,7 +131,7 @@ export const processRawMRFolder = createServerFn({ method: "POST" })
     const folder = await driveFolderInfo();
     const identities = await loadMeterIdentities();
     const references = await loadMeterImageReferences();
-    const storedImages = await listMeterImages({});
+    const storedImages = await listMeterImages();
 
     const result: RawImportResult = {
       total: files.length, processed: 0, attached: 0, review: 0, failed: 0, items: [],
@@ -183,7 +183,7 @@ export const processRawMRFolder = createServerFn({ method: "POST" })
             identity: scan.identity,
             driveFileId: copied.id,
             imageCreatedAt: timestamp,
-            status: confident ? "attached" : "unrelated",
+            status: confident ? "attached" : "review",
           },
         });
 
