@@ -66,7 +66,7 @@ async function folderId() {
       await monitorStore().fetch("https://monitor-state/drive/folder", { method: "DELETE" });
     }
   }
-  const q = encodeURIComponent("name = 'Meter Images' and mimeType = 'application/vnd.google-apps.folder' and trashed = false");
+  const q = encodeURIComponent("name = 'Meter Images' and mimeType = 'application/vnd.google-apps.folder' and trashed = false and 'root' in parents");
   const existing = await driveRequest(`/files?q=${q}&pageSize=1&fields=files(id,name,mimeType)`);
   if (!existing.ok) throw new Error("Could not access Google Drive.");
   const found = await existing.json() as { files?: Array<{ id: string; name: string; mimeType: string }> };
@@ -77,7 +77,7 @@ async function folderId() {
   const created = await driveRequest("/files", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: "Meter Images", mimeType: "application/vnd.google-apps.folder" }),
+    body: JSON.stringify({ name: "Meter Images", mimeType: "application/vnd.google-apps.folder", parents: ["root"] }),
   });
   if (!created.ok) throw new Error("Could not create the Meter Images folder in Google Drive.");
   const body = await created.json() as { id?: string };
