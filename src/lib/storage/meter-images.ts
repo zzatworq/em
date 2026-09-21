@@ -70,8 +70,16 @@ export const listMeterImages = createServerFn({ method: "GET" })
   });
 
 export const attachMeterImage = createServerFn({ method: "POST" })
-  .validator((data: { id: string; readingId?: string | null; status?: "attached" | "unrelated" }) => data)
+  .validator((data: { id: string; meter?: Meter; readingId?: string | null; status?: "attached" | "unrelated" }) => data)
   .handler(async ({ data }) => {
+    const existing = await monitorStore().fetch("https://monitor-state/images/list");
+    if (existing.ok && data.meter) {
+      const body = await existing.json() as { images?: MeterImage[] };
+      const image = (body.images ?? []).find((x) => x.id === data.id);
+      if (image?.driveFileId) {
+        await moveDriveImage({ data: { id: image.driveFileId, meter: data.meter, status: data.status === "unrelated" ? "unrelated" : "attached" } });
+      }
+    }
     const response = await monitorStore().fetch("https://monitor-state/images/attach", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(data),
     });
