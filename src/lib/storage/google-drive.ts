@@ -172,6 +172,9 @@ export const driveFolderInfo = createServerFn({ method: "GET" }).handler(async (
     id: folders.data,
     name: "EM_DATA",
     url: `https://drive.google.com/drive/folders/${encodeURIComponent(folders.data)}`,
+    meter1: folders.meter1,
+    meter2: folders.meter2,
+    unrelated: folders.unrelated,
   };
 });
 
