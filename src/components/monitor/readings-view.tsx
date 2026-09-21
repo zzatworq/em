@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { units } from "@/lib/engine/time";
@@ -34,6 +34,57 @@ function AddReadingModal({ onClose }: { onClose: () => void }) {
 }
 
 
+
+async function imageTimestamp(file: File) {
+  if (/jpe?g/i.test(file.type) || /\\.jpe?g$/i.test(file.name)) {
+    try {
+      const buffer = await file.slice(0, Math.min(file.size, 512 * 1024)).arrayBuffer();
+      const view = new DataView(buffer);
+      let p = 2;
+      while (p + 4 < view.byteLength) {
+        if (view.getUint8(p) !== 0xff) break;
+        const marker = view.getUint8(p + 1); const length = view.getUint16(p + 2);
+        if (marker === 0xe1 && p + 10 < view.byteLength) {
+          const exif = p + 4;
+          if (new TextDecoder().decode(new Uint8Array(buffer, exif, 6)) === "Exif\\0\\0") {
+            const t = exif + 6;
+            const little = view.getUint16(t) === 0x4949;
+            const u16 = (o: number) => view.getUint16(o, little);
+            const u32 = (o: number) => view.getUint32(o, little);
+            if (u16(t + 2) === 42) {
+              const ifd0 = t + u32(t + 4);
+              const entries = u16(ifd0);
+              let exifOffset = 0;
+              for (let i = 0; i < entries; i++) {
+                const e = ifd0 + 2 + i * 12;
+                if (u16(e) === 0x8769) exifOffset = u32(e + 8);
+              }
+              if (exifOffset) {
+                const ifd = t + exifOffset, count = u16(ifd);
+                for (let i = 0; i < count; i++) {
+                  const e = ifd + 2 + i * 12;
+                  if (u16(e) !== 0x9003) continue;
+                  const type = u16(e + 2), n = u32(e + 4);
+                  if (type !== 2 || n < 19) continue;
+                  const offset = n <= 4 ? e + 8 : t + u32(e + 8);
+                  const raw = new TextDecoder().decode(new Uint8Array(buffer, offset, Math.min(n, 19))).replace(/\\0/g, "");
+                  const m = raw.match(/^(\\d{4}):(\\d{2}):(\\d{2}) (\\d{2}):(\\d{2}):(\\d{2})$/);
+                  if (m) {
+                    const value = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6])).getTime();
+                    if (Number.isFinite(value)) return value;
+                  }
+                }
+              }
+            }
+          }
+        }
+        p += Math.max(2, length);
+      }
+    } catch {}
+  }
+  return file.lastModified;
+}
+
 function nearestReadingId(readings: ReturnType<typeof useMonitor.getState>["readings"], timestamp: number) {
   const ordered = [...readings].sort((a, b) => a.datetime - b.datetime);
   if (!ordered.length) return null;
@@ -63,19 +114,22 @@ function BulkUploadModal({ readings, onClose }: { readings: ReturnType<typeof us
   const [message, setMessage] = useState("");
   async function upload() {
     if (!files.length || busy) return;
-    const status = await driveStatus({});
+    const status = await driveStatus();
     if (!status.connected) { window.location.href = "/api/drive/connect"; return; }
     setBusy(true); setMessage("");
     let attached = 0, unrelated = 0;
     for (const file of files) {
       try {
         const base64 = await normalizeImage(file);
-        const readingId = nearestReadingId(readings, file.lastModified);
+        const timestamp = await imageTimestamp(file);
+        const readingId = nearestReadingId(readings, timestamp);
+        const target = readingId ? readings.find((r) => r.id === readingId) : null;
+        const meter = target?.newInput != null && target?.oldInput == null ? "m1" : target?.oldInput != null && target?.newInput == null ? "m2" : "m1";
         const uploaded = await saveMeterImage({ data: {
           id: `img-${crypto.randomUUID()}`,
-          meter: "m1",
+          meter,
           readingId,
-          imageCreatedAt: file.lastModified,
+          imageCreatedAt: timestamp,
           status: readingId ? "attached" : "unrelated",
           imageBase64: base64,
         }});
@@ -99,9 +153,9 @@ function ImageManager({ reading, onClose }: { reading: ReturnType<typeof useMoni
   const [images, setImages] = useState<MeterImage[]>([]);
   const [storageOpen, setStorageOpen] = useState(false);
   async function refresh() { setImages(await listMeterImages({})); }
-  useMemo(() => { void refresh(); }, []);
+  useEffect(() => { void refresh(); }, []);
   const attached = images.filter((x) => x.readingId === reading.id);
-  const available = images.filter((x) => !x.readingId);
+  const available = images.filter((x) => !x.readingId && x.driveFileId);
   async function remove(image: MeterImage) { await attachMeterImage({ data: { id: image.id, readingId: null, status: "unrelated" } }); await refresh(); }
   async function discard(image: MeterImage) { await deleteMeterImage({ data: { id: image.id, driveFileId: image.driveFileId } }); await refresh(); }
   async function attach(image: MeterImage) { await attachMeterImage({ data: { id: image.id, readingId: reading.id, status: "attached" } }); await refresh(); setStorageOpen(false); }
