@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { env } from "cloudflare:workers";
-import { loadDriveImage, uploadDriveImage } from "./google-drive";
+import { loadDriveImage, uploadDriveImage, moveDriveImage } from "./google-drive";
 
 type Meter = "m1" | "m2";
 type MonitorBinding = {
