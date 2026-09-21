@@ -57,12 +57,19 @@ async function folderId() {
   const stored = await monitorStore().fetch("https://monitor-state/drive/folder");
   if (stored.ok) {
     const body = await stored.json() as { folderId?: string | null };
-    if (body.folderId) return body.folderId;
+    if (body.folderId) {
+      const check = await driveRequest(`/files/${encodeURIComponent(body.folderId)}?fields=id,name,mimeType,trashed`);
+      if (check.ok) {
+        const folder = await check.json() as { id?: string; name?: string; mimeType?: string; trashed?: boolean };
+        if (folder.id && folder.mimeType === "application/vnd.google-apps.folder" && !folder.trashed) return folder.id;
+      }
+      await monitorStore().fetch("https://monitor-state/drive/folder", { method: "DELETE" });
+    }
   }
   const q = encodeURIComponent("name = 'Meter Images' and mimeType = 'application/vnd.google-apps.folder' and trashed = false");
-  const existing = await driveRequest(`/files?q=${q}&pageSize=1&fields=files(id,name)`);
+  const existing = await driveRequest(`/files?q=${q}&pageSize=1&fields=files(id,name,mimeType)`);
   if (!existing.ok) throw new Error("Could not access Google Drive.");
-  const found = await existing.json() as { files?: Array<{ id: string }> };
+  const found = await existing.json() as { files?: Array<{ id: string; name: string; mimeType: string }> };
   if (found.files?.[0]?.id) {
     await monitorStore().fetch("https://monitor-state/drive/folder", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ folderId: found.files[0].id }) });
     return found.files[0].id;
@@ -100,6 +107,11 @@ export const driveStatus = createServerFn({ method: "GET" }).handler(async () =>
   if (!response.ok) return { connected: false };
   const body = await response.json() as { refreshToken?: string | null };
   return { connected: Boolean(body.refreshToken) };
+});
+
+export const driveFolderInfo = createServerFn({ method: "GET" }).handler(async () => {
+  const id = await folderId();
+  return { id, name: "Meter Images", url: `https://drive.google.com/drive/folders/${encodeURIComponent(id)}` };
 });
 
 export const uploadDriveImage = createServerFn({ method: "POST" })
