@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { units } from "@/lib/engine/time";
 import { extractMeterReading, type MeterReadingResult } from "@/lib/meter-vision";
 import { loadMeterIdentities, loadMeterImageReferences, saveMeterImage, listMeterImages, attachMeterImage, deleteMeterImage, type MeterImage } from "@/lib/storage/meter-images";
-import { driveStatus, loadDriveImage } from "@/lib/storage/google-drive";
+import { driveStatus, driveFolderInfo, loadDriveImage } from "@/lib/storage/google-drive";
 import { useMonitor } from "@/store/monitor";
 
 function clamp(n: number, min: number, max: number) { return Math.max(min, Math.min(max, n)); }
@@ -127,36 +127,66 @@ function BulkUploadModal({ readings, onClose }: { readings: ReturnType<typeof us
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [folderUrl, setFolderUrl] = useState<string | null>(null);
+  const [folderError, setFolderError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    void driveFolderInfo().then((info) => {
+      if (active) setFolderUrl(info.url);
+    }).catch((err) => {
+      if (active) setFolderError(err instanceof Error ? err.message : "Could not verify the Google Drive folder.");
+    });
+    return () => { active = false; };
+  }, []);
+
   async function upload() {
     if (!files.length || busy) return;
     const status = await driveStatus();
     if (!status.connected) { window.location.href = "/api/drive/connect"; return; }
-    setBusy(true); setMessage("");
-    let attached = 0, unrelated = 0;
-    for (const file of files) {
-      try {
-        const base64 = await normalizeImage(file);
-        const timestamp = await imageTimestamp(file);
-        const readingId = nearestReadingId(readings, timestamp);
-        const target = readingId ? readings.find((r) => r.id === readingId) : null;
-        const meter = target?.newInput != null && target?.oldInput == null ? "m1" : target?.oldInput != null && target?.newInput == null ? "m2" : "m1";
-        const uploaded = await saveMeterImage({ data: {
-          id: `img-${crypto.randomUUID()}`,
-          meter,
-          readingId,
-          imageCreatedAt: timestamp,
-          status: readingId ? "attached" : "unrelated",
-          imageBase64: base64,
-        }});
-        if (uploaded.ok) readingId ? attached++ : unrelated++;
-      } catch { unrelated++; }
-      setMessage(`Uploaded ${attached + unrelated} / ${files.length} · ${attached} attached · ${unrelated} unrelated`);
+    setBusy(true); setMessage(""); setFolderError("");
+    try {
+      const folder = await driveFolderInfo();
+      setFolderUrl(folder.url);
+      let attached = 0, unrelated = 0;
+      for (const file of files) {
+        try {
+          const base64 = await normalizeImage(file);
+          const timestamp = await imageTimestamp(file);
+          const readingId = nearestReadingId(readings, timestamp);
+          const target = readingId ? readings.find((r) => r.id === readingId) : null;
+          const meter = target?.newInput != null && target?.oldInput == null ? "m1" : target?.oldInput != null && target?.newInput == null ? "m2" : "m1";
+          const uploaded = await saveMeterImage({
+            data: {
+              id: `img-${crypto.randomUUID()}`,
+              meter,
+              readingId,
+              imageCreatedAt: timestamp,
+              status: readingId ? "attached" : "unrelated",
+              imageBase64: base64,
+            },
+          });
+          if (uploaded.ok) readingId ? attached++ : unrelated++;
+        } catch { unrelated++; }
+        setMessage(`Uploaded ${attached + unrelated} / ${files.length} · ${attached} attached · ${unrelated} unrelated`);
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Upload failed.");
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }
+
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"><div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-elevated p-5 shadow-border">
     <div className="flex items-center justify-between"><h2 className="font-display text-2xl font-medium">Bulk upload images</h2><Button variant="ghost" size="sm" onClick={onClose}>Close</Button></div>
     <p className="mt-1 text-sm text-muted">Filename timestamps such as IMG_YYYYMMDD_HHMMSS and TimePhoto_YYYYMMDD_HHMMSS are used first, then EXIF. Every selected image is uploaded to Google Drive; images without a reading remain unrelated and can be attached later.</p>
+    <div className="mt-4 rounded-xl border border-border bg-background p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div><p className="text-sm font-medium">Google Drive storage</p><p className="text-xs text-muted">Meter Images folder in your connected Google Drive.</p></div>
+        {folderUrl && <a href={folderUrl} target="_blank" rel="noreferrer" className="text-sm underline">Open Meter Images</a>}
+      </div>
+      {folderError && <p className="mt-2 text-xs text-danger">{folderError}</p>}
+    </div>
     <input ref={inputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
     <div className="mt-4 rounded-xl border border-dashed border-border p-6 text-center"><Button variant="outline" onClick={() => inputRef.current?.click()}>Choose images</Button><p className="mt-2 text-sm text-muted">{files.length ? `${files.length} images selected` : "Select multiple meter photos"}</p></div>
     {message && <p className="mt-3 text-sm">{message}</p>}
