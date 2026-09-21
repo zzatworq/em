@@ -48,7 +48,7 @@ export class MonitorState extends DurableObject {
         imageBase64?: string;
         driveFileId?: string | null;
         imageCreatedAt?: number | null;
-        status?: "attached" | "unrelated";
+        status?: "attached" | "review" | "unrelated";
       };
 
       if (!/^[-_a-zA-Z0-9]{1,80}$/.test(body.id) || (body.meter !== "m1" && body.meter !== "m2")) {
@@ -86,7 +86,7 @@ export class MonitorState extends DurableObject {
     }
 
     if (url.pathname === "/images/attach" && method === "POST") {
-      const body = await request.json() as { id: string; meter?: "m1" | "m2"; readingId?: string | null; status?: "attached" | "unrelated" };
+      const body = await request.json() as { id: string; meter?: "m1" | "m2"; readingId?: string | null; status?: "attached" | "review" | "unrelated" };
       this.ctx.storage.sql.exec("UPDATE meter_images SET meter = COALESCE(?, meter), reading_id = ?, status = ? WHERE id = ?", body.meter ?? null, body.readingId ?? null, body.status ?? (body.readingId ? "attached" : "unrelated"), body.id);
       return Response.json({ ok: true });
     }
