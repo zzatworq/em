@@ -39,7 +39,7 @@ function filenameTimestamp(file: File) {
   // Camera apps commonly encode the original capture time in names such as
   // IMG_20260901_215823.jpg and TimePhoto_20260901_215823.jpg.
   // Ignore suffixes such as _1 / _2: they are duplicate-name suffixes, not time.
-  const match = file.name.match(/(?:IMG|TimePhoto)_(\\d{4})(\\d{2})(\\d{2})_(\\d{2})(\\d{2})(\\d{2})(?:_\\d+)?\\.jpe?g$/i);
+  const match = file.name.match(/(?:IMG|TimePhoto)_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})(?:_\d+)?\.jpe?g$/i);
   if (!match) return null;
   const [, y, mo, d, h, mi, s] = match;
   const value = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)).getTime();
@@ -52,7 +52,7 @@ async function imageTimestamp(file: File) {
   const fromName = filenameTimestamp(file);
   if (fromName != null) return fromName;
 
-  if (/jpe?g/i.test(file.type) || /\\.jpe?g$/i.test(file.name)) {
+  if (/jpe?g/i.test(file.type) || /\.jpe?g$/i.test(file.name)) {
     try {
       const buffer = await file.slice(0, Math.min(file.size, 512 * 1024)).arrayBuffer();
       const view = new DataView(buffer);
@@ -62,7 +62,7 @@ async function imageTimestamp(file: File) {
         const marker = view.getUint8(p + 1); const length = view.getUint16(p + 2);
         if (marker === 0xe1 && p + 10 < view.byteLength) {
           const exif = p + 4;
-          if (new TextDecoder().decode(new Uint8Array(buffer, exif, 6)) === "Exif\\0\\0") {
+          if (new TextDecoder().decode(new Uint8Array(buffer, exif, 6)) === "Exif\0\0") {
             const t = exif + 6;
             const little = view.getUint16(t) === 0x4949;
             const u16 = (o: number) => view.getUint16(o, little);
@@ -83,8 +83,8 @@ async function imageTimestamp(file: File) {
                   const type = u16(e + 2), n = u32(e + 4);
                   if (type !== 2 || n < 19) continue;
                   const offset = n <= 4 ? e + 8 : t + u32(e + 8);
-                  const raw = new TextDecoder().decode(new Uint8Array(buffer, offset, Math.min(n, 19))).replace(/\\0/g, "");
-                  const m = raw.match(/^(\\d{4}):(\\d{2}):(\\d{2}) (\\d{2}):(\\d{2}):(\\d{2})$/);
+                  const raw = new TextDecoder().decode(new Uint8Array(buffer, offset, Math.min(n, 19))).replace(/\0/g, "");
+                  const m = raw.match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
                   if (m) {
                     const value = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6])).getTime();
                     if (Number.isFinite(value)) return value;
