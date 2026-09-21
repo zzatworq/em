@@ -13,6 +13,7 @@ import {
 import {
   loadMeterIdentities,
   loadMeterImageReferences,
+  listMeterImages,
   saveMeterImage,
 } from "./meter-images";
 
@@ -130,6 +131,7 @@ export const processRawMRFolder = createServerFn({ method: "POST" })
     const folder = await driveFolderInfo();
     const identities = await loadMeterIdentities();
     const references = await loadMeterImageReferences();
+    const storedImages = await listMeterImages({});
 
     const result: RawImportResult = {
       total: files.length, processed: 0, attached: 0, review: 0, failed: 0, items: [],
@@ -140,8 +142,7 @@ export const processRawMRFolder = createServerFn({ method: "POST" })
         // Existing organized copies are detected by the source ID recorded in
         // the generated filename. The explicit force option is for reprocessing.
         if (!data.force) {
-          const suffix = file.id.slice(0, 8);
-          const existing = references.some((x) => x.id.includes(suffix));
+          const existing = storedImages.some((x) => x.id === `raw-${file.id}`);
           if (existing) continue;
         }
 
