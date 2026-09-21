@@ -110,7 +110,7 @@ async function dataFolders() {
 
 async function targetFolder(meter: "m1" | "m2", status: "attached" | "unrelated") {
   const folders = await dataFolders();
-  if (status === "unrelated") return folders.unrelated;
+  if (status === "unrelated" || status === "review") return folders.unrelated;
   return meter === "m1" ? folders.meter1 : folders.meter2;
 }
 
@@ -200,7 +200,7 @@ export const uploadDriveImage = createServerFn({ method: "POST" })
   });
 
 export const moveDriveImage = createServerFn({ method: "POST" })
-  .validator((data: { id: string; meter: "m1" | "m2"; status: "attached" | "unrelated" }) => data)
+  .validator((data: { id: string; meter: "m1" | "m2"; status: "attached" | "review" | "unrelated" }) => data)
   .handler(async ({ data }) => {
     const parent = await targetFolder(data.meter, data.status);
     const current = await driveRequest(`/files/${encodeURIComponent(data.id)}?fields=parents`);
