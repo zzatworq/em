@@ -261,10 +261,10 @@ function RawMRModal({ readings, onClose }: { readings: ReturnType<typeof useMoni
 function ImageManager({ reading, onClose }: { reading: ReturnType<typeof useMonitor.getState>["readings"][number]; onClose: () => void }) {
   const [images, setImages] = useState<MeterImage[]>([]);
   const [storageOpen, setStorageOpen] = useState(false);
-  async function refresh() { setImages(await listMeterImages({})); }
+  async function refresh() { setImages(await listMeterImages()); }
   useEffect(() => { void refresh(); }, []);
   const attached = images.filter((x) => x.readingId === reading.id);
-  const available = images.filter((x) => !x.readingId && x.driveFileId);
+  const available = images.filter((x) => !x.readingId && x.driveFileId && (x.status === "review" || x.status === "unrelated"));
   async function remove(image: MeterImage) { await attachMeterImage({ data: { id: image.id, readingId: null, status: "unrelated" } }); await refresh(); }
   async function discard(image: MeterImage) { await deleteMeterImage({ data: { id: image.id, driveFileId: image.driveFileId } }); await refresh(); }
   async function attach(image: MeterImage, meter: MeterKey) { await attachMeterImage({ data: { id: image.id, meter, readingId: reading.id, status: "attached" } }); await refresh(); setStorageOpen(false); }
