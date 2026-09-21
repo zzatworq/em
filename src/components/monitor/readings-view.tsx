@@ -182,8 +182,8 @@ function BulkUploadModal({ readings, onClose }: { readings: ReturnType<typeof us
     <p className="mt-1 text-sm text-muted">Filename timestamps such as IMG_YYYYMMDD_HHMMSS and TimePhoto_YYYYMMDD_HHMMSS are used first, then EXIF. Every selected image is uploaded to Google Drive; images without a reading remain unrelated and can be attached later.</p>
     <div className="mt-4 rounded-xl border border-border bg-background p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><p className="text-sm font-medium">Google Drive storage</p><p className="text-xs text-muted">Meter Images folder in your connected Google Drive.</p></div>
-        {folderUrl && <a href={folderUrl} target="_blank" rel="noreferrer" className="text-sm underline">Open Meter Images</a>}
+        <div><p className="text-sm font-medium">Google Drive storage</p><p className="text-xs text-muted">EM_DATA folder in your connected Google Drive. Images are organized under Meter Readings by meter.</p></div>
+        {folderUrl && <a href={folderUrl} target="_blank" rel="noreferrer" className="text-sm underline">Open EM_DATA</a>}
       </div>
       {folderError && <p className="mt-2 text-xs text-danger">{folderError}</p>}
     </div>
