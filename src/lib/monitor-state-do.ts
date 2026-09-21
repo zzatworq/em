@@ -27,9 +27,11 @@ export class MonitorState extends DurableObject {
     this.ctx.storage.sql.exec(
       "CREATE INDEX IF NOT EXISTS idx_meter_images_meter_created ON meter_images(meter, created_at DESC)"
     );
-    this.ctx.storage.sql.exec("ALTER TABLE meter_images ADD COLUMN drive_file_id TEXT").catch(() => {});
-    this.ctx.storage.sql.exec("ALTER TABLE meter_images ADD COLUMN image_created_at INTEGER").catch(() => {});
-    this.ctx.storage.sql.exec("ALTER TABLE meter_images ADD COLUMN status TEXT NOT NULL DEFAULT 'attached'").catch(() => {})
+    const columns = this.ctx.storage.sql.exec("PRAGMA table_info(meter_images)").toArray() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has("drive_file_id")) this.ctx.storage.sql.exec("ALTER TABLE meter_images ADD COLUMN drive_file_id TEXT");
+    if (!names.has("image_created_at")) this.ctx.storage.sql.exec("ALTER TABLE meter_images ADD COLUMN image_created_at INTEGER");
+    if (!names.has("status")) this.ctx.storage.sql.exec("ALTER TABLE meter_images ADD COLUMN status TEXT NOT NULL DEFAULT 'attached'")
     );
   }
 
