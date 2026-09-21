@@ -213,6 +213,50 @@ function ImageManager({ reading, onClose }: { reading: ReturnType<typeof useMoni
 }
 
 export function ReadingsView() {
-  const readings = useMonitor((s) => s.readings); const deleteReading = useMonitor((s) => s.deleteReading); const [modalOpen, setModalOpen] = useState(false); const [bulkOpen, setBulkOpen] = useState(false); const [imageReading, setImageReading] = useState<ReturnType<typeof useMonitor.getState>["readings"][number] | null>(null); const sorted = useMemo(() => [...readings].sort((a, b) => b.datetime - a.datetime), [readings]);
-  return <section className="space-y-5"><div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-display text-2xl font-medium">Readings</h2><p className="mt-1 text-sm text-muted">Take a meter photo, confirm the detected reading, and add it.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setBulkOpen(true)}>Bulk upload images</Button><Button onClick={() => setModalOpen(true)}>Add reading</Button></div></div></div>{modalOpen && <AddReadingModal onClose={() => setModalOpen(false)} />}{bulkOpen && <BulkUploadModal readings={readings} onClose={() => setBulkOpen(false)} />}{imageReading && <ImageManager reading={imageReading} onClose={() => setImageReading(null)} />}<div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6"><div className="flex items-center justify-between"><h3 className="font-display text-xl font-medium">Recent readings</h3><span className="text-sm text-muted">{readings.length} total</span></div><div className="mt-5 overflow-x-auto"><table className="w-full min-w-[40rem] text-sm"><thead><tr className="text-left text-xs uppercase tracking-wider text-muted"><th className="pb-2 font-medium">When</th><th className="pb-2 text-right font-medium">Meter 1</th><th className="pb-2 text-right font-medium">Meter 2</th><th className="pb-2 text-right font-medium">Load</th><th className="pb-2 font-medium"></th></tr></thead><tbody>{sorted.slice(0, 80).map((r) => <tr key={r.id} className="border-t border-border"><td className="py-2.5">{new Date(r.datetime).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })}</td><td className="py-2.5 text-right tabular-nums">{units(r.newInput)}</td><td className="py-2.5 text-right tabular-nums">{units(r.oldInput)}</td><td className="py-2.5 text-right tabular-nums">{units(r.loadKw)}</td><td className="py-2.5 text-right"><div className="flex justify-end gap-1"><Button variant="ghost" size="sm" onClick={() => setImageReading(r)}>Edit</Button><Button variant="ghost" size="sm" onClick={() => deleteReading(r.id)}>Remove</Button></div></td></tr>)}</tbody></table></div></div></section>;
+  const readings = useMonitor((s) => s.readings);
+  const deleteReading = useMonitor((s) => s.deleteReading);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [imageReading, setImageReading] = useState<ReturnType<typeof useMonitor.getState>["readings"][number] | null>(null);
+  const [meterImages, setMeterImages] = useState<MeterImage[]>([]);
+  const sorted = useMemo(() => [...readings].sort((a, b) => b.datetime - a.datetime), [readings]);
+
+  useEffect(() => {
+    void listMeterImages().then(setMeterImages).catch(() => setMeterImages([]));
+  }, []);
+
+  return <section className="space-y-5">
+    <div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div><h2 className="font-display text-2xl font-medium">Readings</h2><p className="mt-1 text-sm text-muted">Take a meter photo, confirm the detected reading, and add it.</p></div>
+        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setBulkOpen(true)}>Bulk upload images</Button><Button onClick={() => setModalOpen(true)}>Add reading</Button></div>
+      </div>
+    </div>
+    {modalOpen && <AddReadingModal onClose={() => setModalOpen(false)} />}
+    {bulkOpen && <BulkUploadModal readings={readings} onClose={() => setBulkOpen(false)} />}
+    {imageReading && <ImageManager reading={imageReading} onClose={() => { setImageReading(null); void listMeterImages().then(setMeterImages).catch(() => {}); }} />}
+    <div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
+      <div className="flex items-center justify-between"><h3 className="font-display text-xl font-medium">Recent readings</h3><span className="text-sm text-muted">{readings.length} total</span></div>
+      <div className="mt-5 overflow-x-auto">
+        <table className="w-full min-w-[48rem] text-sm">
+          <thead><tr className="text-left text-xs uppercase tracking-wider text-muted">
+            <th className="pb-2 font-medium">When</th><th className="pb-2 text-right font-medium">Meter 1</th><th className="pb-2 text-right font-medium">Meter 2</th><th className="pb-2 text-right font-medium">Load</th><th className="pb-2 font-medium">Images</th><th className="pb-2 font-medium"></th>
+          </tr></thead>
+          <tbody>{sorted.slice(0, 80).map((r) => {
+            const images = meterImages.filter((image) => image.readingId === r.id && image.driveFileId);
+            return <tr key={r.id} className="border-t border-border">
+              <td className="py-2.5">{new Date(r.datetime).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })}</td>
+              <td className="py-2.5 text-right tabular-nums">{units(r.newInput)}</td>
+              <td className="py-2.5 text-right tabular-nums">{units(r.oldInput)}</td>
+              <td className="py-2.5 text-right tabular-nums">{units(r.loadKw)}</td>
+              <td className="py-2.5">
+                {images.length ? <div className="flex flex-wrap gap-2">{images.map((image, index) => <a key={image.id} href={`https://drive.google.com/file/d/${encodeURIComponent(image.driveFileId!)}/view`} target="_blank" rel="noreferrer" className="underline">Image {index + 1}</a>)}</div> : <span className="text-muted">—</span>}
+              </td>
+              <td className="py-2.5 text-right"><div className="flex justify-end gap-1"><Button variant="ghost" size="sm" onClick={() => setImageReading(r)}>Edit</Button><Button variant="ghost" size="sm" onClick={() => deleteReading(r.id)}>Remove</Button></div></td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>
+    </div>
+  </section>;
 }
