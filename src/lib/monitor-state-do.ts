@@ -75,14 +75,6 @@ export class MonitorState extends DurableObject {
         body.status ?? "attached",
         Date.now(),
       );
-      this.ctx.storage.sql.exec(
-        `DELETE FROM meter_images
-         WHERE id IN (
-           SELECT id FROM meter_images
-           ORDER BY created_at DESC
-           LIMIT -1 OFFSET 1000
-         )`,
-      );
       return Response.json({ ok: true });
     }
 
