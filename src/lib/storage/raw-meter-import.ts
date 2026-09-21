@@ -79,7 +79,7 @@ function inferMeter(
 
 function timestampFor(file: RawDriveImage) {
   if (file.imageTime) {
-    const t = Date.parse(file.imageTime);
+    const t = Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}+05:00`);
     if (Number.isFinite(t)) return t;
   }
   const name = file.name;
@@ -87,14 +87,14 @@ function timestampFor(file: RawDriveImage) {
   if (m) {
     // The phone's original EXIF/imageMediaMetadata time is preferred above.
     // Filename timestamps are assumed to be Pakistan local time for this app.
-    const t = Date.parse(\`\${m[1]}-\${m[2]}-\${m[3]}T\${m[4]}:\${m[5]}:\${m[6]}+05:00\`);
+    const t = Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}+05:00`);
     if (Number.isFinite(t)) return t;
   }
   return file.createdTime ? Date.parse(file.createdTime) : Date.now();
 }
 
 function extension(file: RawDriveImage) {
-  const m = file.name.match(/(\\.[^.]+)$/);
+  const m = file.name.match(/(\.[^.]+)$/);
   return m?.[1]?.toLowerCase() ?? ".jpg";
 }
 
@@ -102,7 +102,7 @@ function organizedName(file: RawDriveImage, timestamp: number, meter: Meter | nu
   const stamp = new Date(timestamp).toISOString().replace(/[:.]/g, "-");
   const meterName = meter === "m1" ? "Meter1" : meter === "m2" ? "Meter2" : "Review";
   const reading = value == null ? "unknown" : value.toFixed(2);
-  return \`\${stamp}_\${meterName}_\${reading}_\${file.id.slice(0, 8)}\${extension(file)}\`;
+  return `${stamp}_${meterName}_${reading}_${file.id.slice(0, 8)}${extension(file)}`;
 }
 
 export type RawImportResult = {
@@ -176,7 +176,7 @@ export const processRawMRFolder = createServerFn({ method: "POST" })
 
         await saveMeterImage({
           data: {
-            id: \`raw-\${file.id}\`,
+            id: `raw-${file.id}`,
             meter: meter ?? "m1",
             readingId,
             value: scan.value,
