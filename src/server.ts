@@ -26,7 +26,7 @@ async function handleDriveOAuth(request: Request): Promise<Response | null> {
     if (!clientId) return new Response("Google Drive is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET secrets.", { status: 503 });
     const state = crypto.randomUUID();
     await driveStateStore("/drive/oauth-state", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state, expiresAt: Date.now() + 10 * 60_000 }) });
-    const redirectUri = env.GOOGLE_REDIRECT_URI || `${url.origin}/api/drive/callback`;
+    const redirectUri = `${url.origin}/api/drive/callback`;
     const params = new URLSearchParams({
       client_id: clientId,
       redirect_uri: redirectUri,
@@ -65,7 +65,6 @@ async function handleDriveOAuth(request: Request): Promise<Response | null> {
     const tokens = await tokenResponse.json() as { refresh_token?: string };
     if (!tokens.refresh_token) return new Response("Google did not return a refresh token. Reconnect and approve Drive access.", { status: 502 });
     await driveStateStore("/drive/token", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ refreshToken: tokens.refresh_token }) });
-    await driveStateStore("/drive/oauth-state", { method: "DELETE" });
     return Response.redirect(`${url.origin}/readings?drive=connected`, 302);
   }
 
