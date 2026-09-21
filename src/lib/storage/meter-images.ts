@@ -47,6 +47,8 @@ export const saveMeterImage = createServerFn({ method: "POST" })
         name: `meter-${data.meter}-${data.imageCreatedAt ?? Date.now()}-${data.id}.jpg`,
         mimeType: "image/jpeg",
         imageBase64: data.imageBase64,
+        meter: data.meter,
+        status: data.status ?? "attached",
       }});
       driveFileId = uploaded.id;
     }
