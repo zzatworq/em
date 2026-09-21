@@ -79,11 +79,11 @@ function inferMeter(
 
 function timestampFor(file: RawDriveImage) {
   if (file.imageTime) {
-    const t = Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}+05:00`);
+    const t = Date.parse(file.imageTime);
     if (Number.isFinite(t)) return t;
   }
   const name = file.name;
-  const m = name.match(/(?:IMG|TimePhoto)_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/i);
+  const m = name.match(/(?:IMG|TimePhoto)_(\\d{4})(\\d{2})(\\d{2})_(\\d{2})(\\d{2})(\\d{2})/i);
   if (m) {
     // The phone's original EXIF/imageMediaMetadata time is preferred above.
     // Filename timestamps are assumed to be Pakistan local time for this app.
