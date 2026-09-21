@@ -68,7 +68,10 @@ async function folderId() {
   }
   const q = encodeURIComponent("name = 'Meter Images' and mimeType = 'application/vnd.google-apps.folder' and trashed = false and 'root' in parents");
   const existing = await driveRequest(`/files?q=${q}&pageSize=1&fields=files(id,name,mimeType)`);
-  if (!existing.ok) throw new Error("Could not access Google Drive.");
+  if (!existing.ok) {
+    const detail = await existing.text().catch(() => "");
+    throw new Error(`Could not access Google Drive (HTTP ${existing.status}). ${detail.slice(0, 300)}`);
+  }
   const found = await existing.json() as { files?: Array<{ id: string; name: string; mimeType: string }> };
   if (found.files?.[0]?.id) {
     await monitorStore().fetch("https://monitor-state/drive/folder", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ folderId: found.files[0].id }) });
@@ -79,7 +82,10 @@ async function folderId() {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: "Meter Images", mimeType: "application/vnd.google-apps.folder", parents: ["root"] }),
   });
-  if (!created.ok) throw new Error("Could not create the Meter Images folder in Google Drive.");
+  if (!created.ok) {
+    const detail = await created.text().catch(() => "");
+    throw new Error(`Could not create the Meter Images folder in Google Drive (HTTP ${created.status}). ${detail.slice(0, 300)}`);
+  }
   const body = await created.json() as { id?: string };
   if (!body.id) throw new Error("Google Drive did not return the folder ID.");
   await monitorStore().fetch("https://monitor-state/drive/folder", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ folderId: body.id }) });
