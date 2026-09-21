@@ -238,8 +238,10 @@ export function ReadingsView() {
     setShowAll(false);
   }, [selectedMonth]);
 
-  const periodStart = dashboard?.billingStartDate?.getTime?.() ?? null;
-  const periodEnd = dashboard?.billingEndDate?.getTime?.() ?? null;
+  const billingStartDate = dashboard && !dashboard.empty ? dashboard.billingStartDate : null;
+  const billingEndDate = dashboard && !dashboard.empty ? dashboard.billingEndDate : null;
+  const periodStart = billingStartDate?.getTime() ?? null;
+  const periodEnd = billingEndDate?.getTime() ?? null;
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -269,8 +271,8 @@ export function ReadingsView() {
     });
   }, [sorted, periodStart, periodEnd, showAll, meterImages, meterFilter, imageFilter, search]);
 
-  const periodLabel = dashboard?.billingStartDate && dashboard?.billingEndDate
-    ? `${dashboard.billingStartDate.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })} → ${dashboard.billingEndDate.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })}`
+  const periodLabel = billingStartDate && billingEndDate
+    ? `${billingStartDate.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })} → ${billingEndDate.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })}`
     : "";
 
   return <section className="space-y-5">
