@@ -17,12 +17,19 @@ export class MonitorState extends DurableObject {
         reading_id TEXT,
         value REAL,
         identity TEXT,
-        image_base64 TEXT NOT NULL,
+        image_base64 TEXT NOT NULL DEFAULT '',
+        drive_file_id TEXT,
+        image_created_at INTEGER,
+        status TEXT NOT NULL DEFAULT 'attached',
         created_at INTEGER NOT NULL
       )
     `);
     this.ctx.storage.sql.exec(
       "CREATE INDEX IF NOT EXISTS idx_meter_images_meter_created ON meter_images(meter, created_at DESC)"
+    );
+    this.ctx.storage.sql.exec("ALTER TABLE meter_images ADD COLUMN drive_file_id TEXT").catch(() => {});
+    this.ctx.storage.sql.exec("ALTER TABLE meter_images ADD COLUMN image_created_at INTEGER").catch(() => {});
+    this.ctx.storage.sql.exec("ALTER TABLE meter_images ADD COLUMN status TEXT NOT NULL DEFAULT 'attached'").catch(() => {})
     );
   }
 
@@ -37,26 +44,33 @@ export class MonitorState extends DurableObject {
         readingId?: string;
         value?: number | null;
         identity?: string | null;
-        imageBase64: string;
+        imageBase64?: string;
+        driveFileId?: string | null;
+        imageCreatedAt?: number | null;
+        status?: "attached" | "unrelated";
       };
 
       if (!/^[-_a-zA-Z0-9]{1,80}$/.test(body.id) || (body.meter !== "m1" && body.meter !== "m2")) {
         return new Response("Invalid image metadata", { status: 400 });
       }
-      if (!body.imageBase64 || body.imageBase64.length > 1_800_000) {
-        return new Response("Image is too large or empty", { status: 413 });
+      if (body.imageBase64 && body.imageBase64.length > 1_800_000) {
+        return new Response("Image is too large", { status: 413 });
       }
+      if (!body.imageBase64 && !body.driveFileId) return new Response("Image storage reference is missing", { status: 400 });
 
       this.ctx.storage.sql.exec(
         `INSERT OR REPLACE INTO meter_images
-          (id, meter, reading_id, value, identity, image_base64, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          (id, meter, reading_id, value, identity, image_base64, drive_file_id, image_created_at, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         body.id,
         body.meter,
         body.readingId ?? null,
         body.value ?? null,
         body.identity ?? null,
-        body.imageBase64,
+        body.imageBase64 ?? "",
+        body.driveFileId ?? null,
+        body.imageCreatedAt ?? null,
+        body.status ?? "attached",
         Date.now(),
       );
       this.ctx.storage.sql.exec(
@@ -67,6 +81,43 @@ export class MonitorState extends DurableObject {
            LIMIT -1 OFFSET 1000
          )`,
       );
+      return Response.json({ ok: true });
+    }
+
+    if (url.pathname === "/images/list" && method === "GET") {
+      const rows = this.ctx.storage.sql.exec(
+        `SELECT id, meter, reading_id AS readingId, value, identity, drive_file_id AS driveFileId, image_created_at AS imageCreatedAt, status, created_at AS createdAt
+         FROM meter_images ORDER BY COALESCE(image_created_at, created_at) DESC LIMIT 1000`
+      ).toArray();
+      return Response.json({ images: rows });
+    }
+
+    if (url.pathname === "/images/attach" && method === "POST") {
+      const body = await request.json() as { id: string; readingId?: string | null; status?: "attached" | "unrelated" };
+      this.ctx.storage.sql.exec("UPDATE meter_images SET reading_id = ?, status = ? WHERE id = ?", body.readingId ?? null, body.status ?? (body.readingId ? "attached" : "unrelated"), body.id);
+      return Response.json({ ok: true });
+    }
+
+    if (url.pathname === "/images/delete" && method === "POST") {
+      const body = await request.json() as { id: string };
+      this.ctx.storage.sql.exec("DELETE FROM meter_images WHERE id = ?", body.id);
+      return Response.json({ ok: true });
+    }
+
+    if (url.pathname === "/drive/token" && method === "GET") {
+      return Response.json({ refreshToken: await this.ctx.storage.get<string>("drive_refresh_token") ?? null });
+    }
+    if (url.pathname === "/drive/token" && method === "PUT") {
+      const body = await request.json() as { refreshToken: string };
+      await this.ctx.storage.put("drive_refresh_token", body.refreshToken);
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/drive/folder" && method === "GET") {
+      return Response.json({ folderId: await this.ctx.storage.get<string>("drive_folder_id") ?? null });
+    }
+    if (url.pathname === "/drive/folder" && method === "PUT") {
+      const body = await request.json() as { folderId: string };
+      await this.ctx.storage.put("drive_folder_id", body.folderId);
       return Response.json({ ok: true });
     }
 
