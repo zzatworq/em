@@ -30,7 +30,7 @@ export type MeterImage = {
   identity: string | null;
   driveFileId: string | null;
   imageCreatedAt: number | null;
-  status: "attached" | "unrelated";
+  status: "attached" | "review" | "unrelated";
   createdAt: number;
 };
 
@@ -38,7 +38,7 @@ export const saveMeterImage = createServerFn({ method: "POST" })
   .validator((data: {
     id: string; meter: Meter; readingId?: string | null; value?: number | null;
     identity?: string | null; imageBase64?: string; driveFileId?: string | null;
-    imageCreatedAt?: number | null; status?: "attached" | "unrelated";
+    imageCreatedAt?: number | null; status?: "attached" | "review" | "unrelated";
   }) => data)
   .handler(async ({ data }) => {
     let driveFileId = data.driveFileId ?? null;
@@ -70,14 +70,14 @@ export const listMeterImages = createServerFn({ method: "GET" })
   });
 
 export const attachMeterImage = createServerFn({ method: "POST" })
-  .validator((data: { id: string; meter?: Meter; readingId?: string | null; status?: "attached" | "unrelated" }) => data)
+  .validator((data: { id: string; meter?: Meter; readingId?: string | null; status?: "attached" | "review" | "unrelated" }) => data)
   .handler(async ({ data }) => {
     const existing = await monitorStore().fetch("https://monitor-state/images/list");
     if (existing.ok && data.meter) {
       const body = await existing.json() as { images?: MeterImage[] };
       const image = (body.images ?? []).find((x) => x.id === data.id);
       if (image?.driveFileId) {
-        await moveDriveImage({ data: { id: image.driveFileId, meter: data.meter, status: data.status === "unrelated" ? "unrelated" : "attached" } });
+        await moveDriveImage({ data: { id: image.driveFileId, meter: data.meter, status: data.status ?? "attached" } });
       }
     }
     const response = await monitorStore().fetch("https://monitor-state/images/attach", {
@@ -102,7 +102,7 @@ export const deleteMeterImage = createServerFn({ method: "POST" })
 
 export const loadMeterImageReferences = createServerFn({ method: "GET" })
   .handler(async (): Promise<MeterImageReference[]> => {
-    const response = await monitorStore().fetch("https://monitor-state/images/references?limit=3");
+    const response = await monitorStore().fetch("https://monitor-state/images/references?limit=20");
     if (!response.ok) throw new Error(`Meter image references failed (${response.status})`);
     const body = await response.json() as { images?: Array<MeterImageReference> };
     const refs = Array.isArray(body.images) ? body.images : [];
