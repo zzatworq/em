@@ -12,7 +12,7 @@ function monitorStore() {
   return binding.get(binding.idFromName("default"));
 }
 
-const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const DRIVE_UPLOAD = "https://www.googleapis.com/upload/drive/v3";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
@@ -130,6 +130,34 @@ export type DriveImage = {
   size: string | null;
   webViewLink?: string | null;
 };
+
+export type RawDriveImage = DriveImage & { imageTime?: string | null; md5Checksum?: string | null };
+
+async function findNamedFolder(name: string, parentId = "root") {
+  return findFolder(name, parentId);
+}
+
+export const listRawDriveImages = createServerFn({ method: "GET" }).handler(async (): Promise<RawDriveImage[]> => {
+  const folderId = await findNamedFolder("MR", "root");
+  if (!folderId) throw new Error('Google Drive folder "MR" was not found in the root of Drive.');
+  const q = encodeURIComponent(`'${folderId}' in parents and trashed = false and mimeType contains 'image/'`);
+  const fields = "files(id,name,mimeType,createdTime,modifiedTime,size,webViewLink,md5Checksum,imageMediaMetadata(time))";
+  const response = await driveRequest(`/files?q=${q}&pageSize=1000&orderBy=name&fields=${encodeURIComponent(fields)}`);
+  if (!response.ok) throw new Error(`Google Drive MR image list failed (${response.status}).`);
+  const body = await response.json() as { files?: Array<DriveImage & { md5Checksum?: string; imageMediaMetadata?: { time?: string } }> };
+  return (body.files ?? []).map((file) => ({ ...file, imageTime: file.imageMediaMetadata?.time ?? null }));
+});
+
+export const copyDriveImage = createServerFn({ method: "POST" })
+  .validator((data: { sourceId: string; parentId: string; name: string }) => data)
+  .handler(async ({ data }) => {
+    const response = await driveRequest(`/files/${encodeURIComponent(data.sourceId)}/copy?fields=id,name,mimeType,createdTime,modifiedTime,size,webViewLink`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: data.name, parents: [data.parentId] }),
+    });
+    if (!response.ok) throw new Error(`Google Drive copy failed (${response.status}).`);
+    return await response.json() as DriveImage;
+  });
 
 export const driveStatus = createServerFn({ method: "GET" }).handler(async () => {
   const response = await monitorStore().fetch("https://monitor-state/drive/token");
