@@ -8,7 +8,7 @@
     "enabled": true
   },
   "secrets": {
-    "required": ["GEMINI_ANTHROPIC_API_KEY"]
+    "required": ["GEMINI_ANTHROPIC_API_KEY", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]
   },
   "durable_objects": {
     "bindings": [
