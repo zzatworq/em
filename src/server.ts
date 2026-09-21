@@ -35,7 +35,7 @@ async function handleDriveOAuth(request: Request): Promise<Response | null> {
       access_type: "offline",
       prompt: "consent",
       include_granted_scopes: "true",
-      scope: "https://www.googleapis.com/auth/drive.file",
+      scope: "https://www.googleapis.com/auth/drive",
       state,
     });
     return Response.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`, 302);
