@@ -35,7 +35,23 @@ function AddReadingModal({ onClose }: { onClose: () => void }) {
 
 
 
+function filenameTimestamp(file: File) {
+  // Camera apps commonly encode the original capture time in names such as
+  // IMG_20260901_215823.jpg and TimePhoto_20260901_215823.jpg.
+  // Ignore suffixes such as _1 / _2: they are duplicate-name suffixes, not time.
+  const match = file.name.match(/(?:IMG|TimePhoto)_(\\d{4})(\\d{2})(\\d{2})_(\\d{2})(\\d{2})(\\d{2})(?:_\\d+)?\\.jpe?g$/i);
+  if (!match) return null;
+  const [, y, mo, d, h, mi, s] = match;
+  const value = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)).getTime();
+  return Number.isFinite(value) ? value : null;
+}
+
 async function imageTimestamp(file: File) {
+  // Filename time is authoritative for bulk imports because Windows can
+  // rewrite lastModified when files are copied. EXIF is the next fallback.
+  const fromName = filenameTimestamp(file);
+  if (fromName != null) return fromName;
+
   if (/jpe?g/i.test(file.type) || /\\.jpe?g$/i.test(file.name)) {
     try {
       const buffer = await file.slice(0, Math.min(file.size, 512 * 1024)).arrayBuffer();
@@ -86,17 +102,16 @@ async function imageTimestamp(file: File) {
 }
 
 function nearestReadingId(readings: ReturnType<typeof useMonitor.getState>["readings"], timestamp: number) {
-  const ordered = [...readings].sort((a, b) => a.datetime - b.datetime);
-  if (!ordered.length) return null;
-  let best: typeof ordered[number] | null = null;
+  // Bulk imports are matched to the closest reading by absolute time.
+  // Multiple images are allowed to resolve to the same reading.
+  let best: typeof readings[number] | null = null;
   let bestDistance = Number.POSITIVE_INFINITY;
-  for (let i = 0; i < ordered.length; i++) {
-    const r = ordered[i];
-    const prevGap = i > 0 ? r.datetime - ordered[i - 1].datetime : Number.POSITIVE_INFINITY;
-    const nextGap = i + 1 < ordered.length ? ordered[i + 1].datetime - r.datetime : Number.POSITIVE_INFINITY;
-    const bracket = Math.min(prevGap, nextGap) / 2;
-    const distance = Math.abs(timestamp - r.datetime);
-    if (distance <= bracket && distance < bestDistance) { best = r; bestDistance = distance; }
+  for (const reading of readings) {
+    const distance = Math.abs(timestamp - reading.datetime);
+    if (distance < bestDistance) {
+      best = reading;
+      bestDistance = distance;
+    }
   }
   return best?.id ?? null;
 }
@@ -141,7 +156,7 @@ function BulkUploadModal({ readings, onClose }: { readings: ReturnType<typeof us
   }
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"><div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-elevated p-5 shadow-border">
     <div className="flex items-center justify-between"><h2 className="font-display text-2xl font-medium">Bulk upload images</h2><Button variant="ghost" size="sm" onClick={onClose}>Close</Button></div>
-    <p className="mt-1 text-sm text-muted">Images are matched to the nearest reading using the file timestamp. Images outside a reading bracket become unrelated.</p>
+    <p className="mt-1 text-sm text-muted">Filename timestamps such as IMG_YYYYMMDD_HHMMSS and TimePhoto_YYYYMMDD_HHMMSS are used first, then EXIF. Every selected image is uploaded to Google Drive; images without a reading remain unrelated and can be attached later.</p>
     <input ref={inputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
     <div className="mt-4 rounded-xl border border-dashed border-border p-6 text-center"><Button variant="outline" onClick={() => inputRef.current?.click()}>Choose images</Button><p className="mt-2 text-sm text-muted">{files.length ? `${files.length} images selected` : "Select multiple meter photos"}</p></div>
     {message && <p className="mt-3 text-sm">{message}</p>}
