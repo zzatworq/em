@@ -15,6 +15,7 @@ function monitorStore() {
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const DRIVE_UPLOAD = "https://www.googleapis.com/upload/drive/v3";
+const FOLDER_MIME = "application/vnd.google-apps.folder";
 
 async function getRefreshToken() {
   const response = await monitorStore().fetch("https://monitor-state/drive/token");
@@ -32,12 +33,7 @@ async function accessToken() {
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      refresh_token: refreshToken,
-      grant_type: "refresh_token",
-    }),
+    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, grant_type: "refresh_token" }),
   });
   if (!response.ok) throw new Error("Google Drive authorization has expired or was revoked. Reconnect Google Drive.");
   const body = await response.json() as { access_token?: string };
@@ -53,43 +49,69 @@ async function driveRequest(path: string, init?: RequestInit) {
   });
 }
 
-async function folderId() {
-  const stored = await monitorStore().fetch("https://monitor-state/drive/folder");
-  if (stored.ok) {
-    const body = await stored.json() as { folderId?: string | null };
-    if (body.folderId) {
-      const check = await driveRequest(`/files/${encodeURIComponent(body.folderId)}?fields=id,name,mimeType,trashed`);
-      if (check.ok) {
-        const folder = await check.json() as { id?: string; name?: string; mimeType?: string; trashed?: boolean };
-        if (folder.id && folder.mimeType === "application/vnd.google-apps.folder" && !folder.trashed) return folder.id;
-      }
-      await monitorStore().fetch("https://monitor-state/drive/folder", { method: "DELETE" });
-    }
+async function findFolder(name: string, parentId: string) {
+  const q = encodeURIComponent(`name = '${name.replace(/'/g, "\\'")}' and mimeType = '${FOLDER_MIME}' and trashed = false and '${parentId}' in parents`);
+  const response = await driveRequest(`/files?q=${q}&pageSize=1&fields=files(id,name,mimeType,parents)`);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Could not access Google Drive (HTTP ${response.status}). ${detail.slice(0, 300)}`);
   }
-  const q = encodeURIComponent("name = 'Meter Images' and mimeType = 'application/vnd.google-apps.folder' and trashed = false and 'root' in parents");
-  const existing = await driveRequest(`/files?q=${q}&pageSize=1&fields=files(id,name,mimeType)`);
-  if (!existing.ok) {
-    const detail = await existing.text().catch(() => "");
-    throw new Error(`Could not access Google Drive (HTTP ${existing.status}). ${detail.slice(0, 300)}`);
-  }
-  const found = await existing.json() as { files?: Array<{ id: string; name: string; mimeType: string }> };
-  if (found.files?.[0]?.id) {
-    await monitorStore().fetch("https://monitor-state/drive/folder", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ folderId: found.files[0].id }) });
-    return found.files[0].id;
-  }
-  const created = await driveRequest("/files", {
+  const body = await response.json() as { files?: Array<{ id: string; name: string; mimeType: string }> };
+  return body.files?.[0]?.id ?? null;
+}
+
+async function createFolder(name: string, parentId: string) {
+  const response = await driveRequest("/files", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: "Meter Images", mimeType: "application/vnd.google-apps.folder", parents: ["root"] }),
+    body: JSON.stringify({ name, mimeType: FOLDER_MIME, parents: [parentId] }),
   });
-  if (!created.ok) {
-    const detail = await created.text().catch(() => "");
-    throw new Error(`Could not create the Meter Images folder in Google Drive (HTTP ${created.status}). ${detail.slice(0, 300)}`);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Could not create the ${name} folder in Google Drive (HTTP ${response.status}). ${detail.slice(0, 300)}`);
   }
-  const body = await created.json() as { id?: string };
+  const body = await response.json() as { id?: string };
   if (!body.id) throw new Error("Google Drive did not return the folder ID.");
-  await monitorStore().fetch("https://monitor-state/drive/folder", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ folderId: body.id }) });
   return body.id;
+}
+
+async function ensureFolder(name: string, parentId: string) {
+  return (await findFolder(name, parentId)) ?? createFolder(name, parentId);
+}
+
+async function dataFolders() {
+  const root = "root";
+  let data = await findFolder("EM_DATA", root);
+  if (!data) {
+    // Reuse the old app-created folder instead of leaving two storage roots.
+    const old = await findFolder("Meter Images", root);
+    if (old) {
+      const renamed = await driveRequest(`/files/${encodeURIComponent(old)}?fields=id,name`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "EM_DATA" }),
+      });
+      if (!renamed.ok) throw new Error("Could not rename the existing Meter Images folder to EM_DATA.");
+      data = old;
+    }
+  }
+  if (!data) data = await createFolder("EM_DATA", root);
+  const readings = await ensureFolder("Meter Readings", data);
+  const meter1 = await ensureFolder("Meter 1", readings);
+  const meter2 = await ensureFolder("Meter 2", readings);
+  const unrelated = await ensureFolder("Unrelated", readings);
+  await monitorStore().fetch("https://monitor-state/drive/folders", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ data, readings, meter1, meter2, unrelated }),
+  });
+  return { data, readings, meter1, meter2, unrelated };
+}
+
+async function targetFolder(meter: "m1" | "m2", status: "attached" | "unrelated") {
+  const folders = await dataFolders();
+  if (status === "unrelated") return folders.unrelated;
+  return meter === "m1" ? folders.meter1 : folders.meter2;
 }
 
 function base64Bytes(value: string) {
@@ -106,6 +128,7 @@ export type DriveImage = {
   createdTime: string | null;
   modifiedTime: string | null;
   size: string | null;
+  webViewLink?: string | null;
 };
 
 export const driveStatus = createServerFn({ method: "GET" }).handler(async () => {
@@ -116,14 +139,18 @@ export const driveStatus = createServerFn({ method: "GET" }).handler(async () =>
 });
 
 export const driveFolderInfo = createServerFn({ method: "GET" }).handler(async () => {
-  const id = await folderId();
-  return { id, name: "Meter Images", url: `https://drive.google.com/drive/folders/${encodeURIComponent(id)}` };
+  const folders = await dataFolders();
+  return {
+    id: folders.data,
+    name: "EM_DATA",
+    url: `https://drive.google.com/drive/folders/${encodeURIComponent(folders.data)}`,
+  };
 });
 
 export const uploadDriveImage = createServerFn({ method: "POST" })
-  .validator((data: { name: string; mimeType: string; imageBase64: string }) => data)
+  .validator((data: { name: string; mimeType: string; imageBase64: string; meter?: "m1" | "m2"; status?: "attached" | "unrelated" }) => data)
   .handler(async ({ data }) => {
-    const parent = await folderId();
+    const parent = await targetFolder(data.meter ?? "m1", data.status ?? "attached");
     const boundary = `em-${crypto.randomUUID()}`;
     const metadata = JSON.stringify({ name: data.name, mimeType: data.mimeType || "image/jpeg", parents: [parent] });
     const media = base64Bytes(data.imageBase64);
@@ -132,7 +159,7 @@ export const uploadDriveImage = createServerFn({ method: "POST" })
     const tail = encoder.encode(`\r\n--${boundary}--`);
     const body = new Uint8Array(head.length + media.length + tail.length);
     body.set(head, 0); body.set(media, head.length); body.set(tail, head.length + media.length);
-    const response = await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id,name,mimeType,createdTime,modifiedTime,size`, {
+    const response = await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id,name,mimeType,createdTime,modifiedTime,size,webViewLink`, {
       method: "POST",
       headers: { Authorization: `Bearer ${await accessToken()}`, "Content-Type": `multipart/related; boundary=${boundary}` },
       body,
@@ -141,10 +168,25 @@ export const uploadDriveImage = createServerFn({ method: "POST" })
     return await response.json() as DriveImage;
   });
 
+export const moveDriveImage = createServerFn({ method: "POST" })
+  .validator((data: { id: string; meter: "m1" | "m2"; status: "attached" | "unrelated" }) => data)
+  .handler(async ({ data }) => {
+    const parent = await targetFolder(data.meter, data.status);
+    const current = await driveRequest(`/files/${encodeURIComponent(data.id)}?fields=parents`);
+    if (!current.ok) throw new Error(`Google Drive image lookup failed (${current.status}).`);
+    const body = await current.json() as { parents?: string[] };
+    const oldParents = (body.parents ?? []).filter((id) => id !== parent);
+    const query = new URLSearchParams({ addParents: parent, fields: "id,parents" });
+    if (oldParents.length) query.set("removeParents", oldParents.join(","));
+    const response = await driveRequest(`/files/${encodeURIComponent(data.id)}?${query.toString()}`, { method: "PATCH" });
+    if (!response.ok) throw new Error(`Google Drive image move failed (${response.status}).`);
+    return { ok: true };
+  });
+
 export const listDriveImages = createServerFn({ method: "GET" }).handler(async (): Promise<DriveImage[]> => {
-  const parent = await folderId();
-  const q = encodeURIComponent(`'${parent}' in parents and trashed = false and mimeType contains 'image/'`);
-  const response = await driveRequest(`/files?q=${q}&pageSize=1000&orderBy=modifiedTime desc&fields=files(id,name,mimeType,createdTime,modifiedTime,size)`);
+  const folders = await dataFolders();
+  const q = encodeURIComponent(`'${folders.readings}' in parents and trashed = false and mimeType contains 'image/'`);
+  const response = await driveRequest(`/files?q=${q}&pageSize=1000&orderBy=modifiedTime desc&fields=files(id,name,mimeType,createdTime,modifiedTime,size,webViewLink)`);
   if (!response.ok) throw new Error(`Google Drive image list failed (${response.status}).`);
   const body = await response.json() as { files?: DriveImage[] };
   return body.files ?? [];
