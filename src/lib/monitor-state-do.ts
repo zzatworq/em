@@ -98,7 +98,8 @@ export class MonitorState extends DurableObject {
     }
 
     if (url.pathname === "/drive/oauth-state" && method === "GET") {
-      return Response.json({ oauthState: await this.ctx.storage.get<string>("drive_oauth_state") ?? null });
+      const stored = await this.ctx.storage.get<string>("drive_oauth_state");
+      return Response.json(stored ? JSON.parse(stored) : null);
     }
     if (url.pathname === "/drive/oauth-state" && method === "PUT") {
       const body = await request.json() as { state: string; expiresAt: number };
