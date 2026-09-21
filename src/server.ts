@@ -50,6 +50,7 @@ async function handleDriveOAuth(request: Request): Promise<Response | null> {
     const saved = await driveStateStore("/drive/oauth-state");
     const stateBody = saved.ok ? await saved.json() as { state?: string; expiresAt?: number } : {};
     if (state !== stateBody.state || !stateBody.expiresAt || stateBody.expiresAt < Date.now()) return new Response("Invalid or expired Google OAuth state.", { status: 400 });
+    await driveStateStore("/drive/oauth-state", { method: "DELETE" });
     const clientId = env.GOOGLE_CLIENT_ID;
     const clientSecret = env.GOOGLE_CLIENT_SECRET;
     if (!clientId || !clientSecret) return new Response("Google Drive is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET secrets.", { status: 503 });
