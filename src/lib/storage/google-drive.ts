@@ -108,7 +108,7 @@ async function dataFolders() {
   return { data, readings, meter1, meter2, unrelated };
 }
 
-async function targetFolder(meter: "m1" | "m2", status: "attached" | "unrelated") {
+async function targetFolder(meter: "m1" | "m2", status: "attached" | "review" | "unrelated") {
   const folders = await dataFolders();
   if (status === "unrelated" || status === "review") return folders.unrelated;
   return meter === "m1" ? folders.meter1 : folders.meter2;
@@ -179,7 +179,7 @@ export const driveFolderInfo = createServerFn({ method: "GET" }).handler(async (
 });
 
 export const uploadDriveImage = createServerFn({ method: "POST" })
-  .validator((data: { name: string; mimeType: string; imageBase64: string; meter?: "m1" | "m2"; status?: "attached" | "unrelated" }) => data)
+  .validator((data: { name: string; mimeType: string; imageBase64: string; meter?: "m1" | "m2"; status?: "attached" | "review" | "unrelated" }) => data)
   .handler(async ({ data }) => {
     const parent = await targetFolder(data.meter ?? "m1", data.status ?? "attached");
     const boundary = `em-${crypto.randomUUID()}`;
