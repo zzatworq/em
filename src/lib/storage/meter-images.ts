@@ -29,6 +29,7 @@ export type MeterImage = {
   value: number | null;
   identity: string | null;
   driveFileId: string | null;
+  imageBase64?: string;
   imageCreatedAt: number | null;
   status: "attached" | "review" | "unrelated";
   createdAt: number;
