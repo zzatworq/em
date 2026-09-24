@@ -211,16 +211,31 @@ function RawMRModal({ readings, onClose }: { readings: ReturnType<typeof useMoni
     if (!status.connected) { window.location.href = "/api/drive/connect"; return; }
     setBusy(true); setError(""); setResult(null);
     try {
-      setResult(await processRawMRFolder({
-        data: {
-          readings: readings.map((r) => ({
-            id: r.id,
-            datetime: r.datetime,
-            newInput: r.newInput ?? null,
-            oldInput: r.oldInput ?? null,
-          })),
-        },
-      }));
+      const input = {
+        readings: readings.map((r) => ({
+          id: r.id,
+          datetime: r.datetime,
+          newInput: r.newInput ?? null,
+          oldInput: r.oldInput ?? null,
+        })),
+      };
+      let start = 0;
+      let aggregate: RawImportResult | null = null;
+      do {
+        const batch = await processRawMRFolder({ data: { ...input, start, batchSize: 25 } });
+        aggregate = aggregate
+          ? {
+              ...batch,
+              processed: aggregate.processed + batch.processed,
+              attached: aggregate.attached + batch.attached,
+              review: aggregate.review + batch.review,
+              failed: aggregate.failed + batch.failed,
+              items: [...aggregate.items, ...batch.items],
+            }
+          : batch;
+        setResult(aggregate);
+        start = batch.nextStart;
+      } while (!aggregate.complete);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not process the MR folder.");
     } finally {
@@ -240,7 +255,7 @@ function RawMRModal({ readings, onClose }: { readings: ReturnType<typeof useMoni
         {folderUrl && <a href={folderUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm underline">Open EM_DATA</a>}
       </div>
       {error && <p className="mt-3 text-sm text-danger">{error}</p>}
-      {busy && <p className="mt-3 text-sm">Processing raw images… This may take time because each image is scanned before it is organized.</p>}
+      {busy && <p className="mt-3 text-sm">Processing raw images in small batches. MR stays untouched; matching uses capture time first, without sending every historical image to AI.</p>}
       {result && <div className="mt-4 rounded-xl border border-border p-4">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div><p className="text-xs text-muted">Raw images</p><p className="text-xl font-medium">{result.total}</p></div>
