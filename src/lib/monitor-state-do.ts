@@ -44,7 +44,7 @@ export class MonitorState extends DurableObject {
 
     if (url.pathname === "/images/list" && method === "GET") {
       const rows = this.ctx.storage.sql.exec(`SELECT id, meter, reading_id AS readingId, value, identity,
-        drive_file_id AS driveFileId, image_created_at AS imageCreatedAt, status, created_at AS createdAt
+        drive_file_id AS driveFileId, image_base64 AS imageBase64, image_created_at AS imageCreatedAt, status, created_at AS createdAt
         FROM meter_images ORDER BY COALESCE(image_created_at, created_at) DESC LIMIT 5000`).toArray();
       return Response.json({ images: rows });
     }
