@@ -80,6 +80,11 @@ async function ensureFolder(name: string, parentId: string) {
 }
 
 async function dataFolders() {
+  const cached = await monitorStore().fetch("https://monitor-state/drive/folders");
+  if (cached.ok) {
+    const saved = await cached.json() as { data?: string; readings?: string; meter1?: string; meter2?: string; unrelated?: string } | null;
+    if (saved?.data && saved.readings && saved.meter1 && saved.meter2 && saved.unrelated) return saved as { data: string; readings: string; meter1: string; meter2: string; unrelated: string };
+  }
   const root = "root";
   let data = await findFolder("EM_DATA", root);
   if (!data) {
