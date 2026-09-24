@@ -165,8 +165,8 @@ function base64Bytes(value: string): Uint8Array {
 function multipartBody(metadata: unknown, mimeType: string, bytes: Uint8Array) {
   const boundary = "emonitor-" + crypto.randomUUID();
   const encoder = new TextEncoder();
-  const head = encoder.encode("--" + boundary + "\\r\\nContent-Type: application/json; charset=UTF-8\\r\\n\\r\\n" + JSON.stringify(metadata) + "\\r\\n--" + boundary + "\\r\\nContent-Type: " + mimeType + "\\r\\n\\r\\n");
-  const tail = encoder.encode("\\r\\n--" + boundary + "--");
+  const head = encoder.encode("--" + boundary + "\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n" + JSON.stringify(metadata) + "\r\n--" + boundary + "\r\nContent-Type: " + mimeType + "\r\n\r\n");
+  const tail = encoder.encode("\r\n--" + boundary + "--");
   const body = new Uint8Array(head.length + bytes.length + tail.length);
   body.set(head, 0);
   body.set(bytes, head.length);
