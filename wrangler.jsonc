@@ -4,6 +4,9 @@
   "compatibility_date": "2026-09-10",
   "compatibility_flags": ["nodejs_compat"],
   "main": "src/server.ts",
+  "ai": {
+    "binding": "AI"
+  },
   "observability": {
     "enabled": true
   },
