@@ -18,6 +18,8 @@ import { Route as SettingsRouteImport } from './routes/_app/settings'
 import { Route as ReadingsRouteImport } from './routes/_app/readings'
 import { Route as RefRouteImport } from './routes/_app/ref'
 import { Route as HealthCheckRouteImport } from './routes/health-check'
+import { Route as ApiDriveConnectRouteImport } from './routes/api/drive/connect'
+import { Route as ApiDriveCallbackRouteImport } from './routes/api/drive/callback'
 
 const _appRoute = _appRouteImport.update({
   id: '/_app',
@@ -63,6 +65,16 @@ const HealthCheckRoute = HealthCheckRouteImport.update({
   path: '/health-check',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDriveConnectRoute = ApiDriveConnectRouteImport.update({
+  id: '/api/drive/connect',
+  path: '/api/drive/connect',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDriveCallbackRoute = ApiDriveCallbackRouteImport.update({
+  id: '/api/drive/callback',
+  path: '/api/drive/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 const _appRouteChildren = {
   _appIndexRoute: _appIndexRoute,
@@ -83,6 +95,8 @@ export interface FileRoutesByFullPath {
   '/readings': typeof ReadingsRoute
   '/ref': typeof RefRoute
   '/health-check': typeof HealthCheckRoute
+  '/api/drive/connect': typeof ApiDriveConnectRoute
+  '/api/drive/callback': typeof ApiDriveCallbackRoute
 }
 export interface FileRoutesByTo {
   '/': typeof _appIndexRoute
@@ -93,6 +107,8 @@ export interface FileRoutesByTo {
   '/readings': typeof ReadingsRoute
   '/ref': typeof RefRoute
   '/health-check': typeof HealthCheckRoute
+  '/api/drive/connect': typeof ApiDriveConnectRoute
+  '/api/drive/callback': typeof ApiDriveCallbackRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -105,18 +121,22 @@ export interface FileRoutesById {
   '/_app/readings': typeof ReadingsRoute
   '/_app/ref': typeof RefRoute
   '/health-check': typeof HealthCheckRoute
+  '/api/drive/connect': typeof ApiDriveConnectRoute
+  '/api/drive/callback': typeof ApiDriveCallbackRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/bill' | '/history' | '/notes' | '/settings' | '/readings' | '/ref' | '/health-check'
+  fullPaths: '/' | '/bill' | '/history' | '/notes' | '/settings' | '/readings' | '/ref' | '/health-check' | '/api/drive/connect' | '/api/drive/callback'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/bill' | '/history' | '/notes' | '/settings' | '/readings' | '/ref' | '/health-check'
-  id: '__root__' | '/_app' | '/_app/' | '/_app/bill' | '/_app/history' | '/_app/notes' | '/_app/settings' | '/_app/readings' | '/_app/ref' | '/health-check'
+  to: '/' | '/bill' | '/history' | '/notes' | '/settings' | '/readings' | '/ref' | '/health-check' | '/api/drive/connect' | '/api/drive/callback'
+  id: '__root__' | '/_app' | '/_app/' | '/_app/bill' | '/_app/history' | '/_app/notes' | '/_app/settings' | '/_app/readings' | '/_app/ref' | '/health-check' | '/api/drive/connect' | '/api/drive/callback'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   _appRoute: typeof _appRoute
   HealthCheckRoute: typeof HealthCheckRoute
+  ApiDriveConnectRoute: typeof ApiDriveConnectRoute
+  ApiDriveCallbackRoute: typeof ApiDriveCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -184,12 +204,28 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HealthCheckRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/drive/connect': {
+      id: '/api/drive/connect'
+      path: '/api/drive/connect'
+      fullPath: '/api/drive/connect'
+      preLoaderRoute: typeof ApiDriveConnectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/drive/callback': {
+      id: '/api/drive/callback'
+      path: '/api/drive/callback'
+      fullPath: '/api/drive/callback'
+      preLoaderRoute: typeof ApiDriveCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   _appRoute: _appRoute._addFileChildren(_appRouteChildren),
   HealthCheckRoute: HealthCheckRoute,
+  ApiDriveConnectRoute: ApiDriveConnectRoute,
+  ApiDriveCallbackRoute: ApiDriveCallbackRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
