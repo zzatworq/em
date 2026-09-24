@@ -13,12 +13,15 @@ function monitorStore(): DurableObjectStub {
   return binding.get(binding.idFromName("default"));
 }
 
-function googleConfig() {
+function googleConfig(): { GOOGLE_CLIENT_ID: string; GOOGLE_CLIENT_SECRET: string } {
   const e = env as unknown as { GOOGLE_CLIENT_ID?: string; GOOGLE_CLIENT_SECRET?: string };
   if (!e.GOOGLE_CLIENT_ID || !e.GOOGLE_CLIENT_SECRET) {
     throw new Error("Google Drive is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.");
   }
-  return e;
+  return {
+    GOOGLE_CLIENT_ID: e.GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET: e.GOOGLE_CLIENT_SECRET,
+  };
 }
 
 export function googleDriveRedirectUri(request: Request) {
@@ -132,8 +135,8 @@ async function driveUploadRequest(path: string, init: RequestInit = {}) {
 }
 
 async function findOrCreateFolder(name: string, parentId: string): Promise<string> {
-  const escaped = name.replace(/'/g, "\\'");
-  const q = encodeURIComponent("'" + parentId + "' in parents and name = '" + escaped + "' and mimeType = 'application/vnd.google-apps.folder' and trashed = false");
+  const escaped = name.replace(/'/g, "\'");
+  const q = encodeURIComponent("'"+parentId+"' in parents and name = '"+escaped+"' and mimeType = 'application/vnd.google-apps.folder' and trashed = false");
   const list = await driveRequest("files?q=" + q + "&pageSize=10&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true");
   const body = await list.json() as { files?: Array<{ id?: string }> };
   if (!list.ok) throw new Error("Google Drive folder lookup failed (" + list.status + ").");
