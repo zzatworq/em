@@ -84,23 +84,24 @@ function backfillHistoricalReadings(history: HistoryRow[]): HistoryRow[] {
       .sort((a, b) => monthKey(a.row.month) - monthKey(b.row.month));
     if (!rows.length) return [];
 
-    const anchorIndex = rows.findIndex(({ row }) => row.month === anchors[meter].month);
-    if (anchorIndex < 0) return rows.map(({ row }) => row);
+    const output = rows.map(({ row }) => row);
+    // Work backwards from each known reading, stopping at the next known
+    // reading. This preserves real historical anchors and prevents a later
+    // meter reading from being propagated across a meter reset/gap.
+    for (let anchorIndex = rows.length - 1; anchorIndex >= 0; anchorIndex--) {
+      const anchor = output[anchorIndex];
+      if (anchor.reading == null || !Number.isFinite(anchor.reading) || anchor.reading < 0) continue;
 
-    const readings = new Map<number, number>();
-    readings.set(rows[anchorIndex].index, anchors[meter].reading);
-
-    let reading = anchors[meter].reading;
-    for (let i = anchorIndex - 1; i >= 0; i--) {
-      reading -= Number(rows[i + 1].row.units) || 0;
-      readings.set(rows[i].index, reading);
+      let reading = anchor.reading;
+      for (let i = anchorIndex - 1; i >= 0; i--) {
+        if (output[i].reading != null && Number.isFinite(output[i].reading)) break;
+        reading -= Number(output[i + 1].units) || 0;
+        if (reading < 0) break;
+        output[i] = { ...output[i], reading };
+      }
     }
 
-    return rows.map(({ row, index }) => {
-      if (row.reading != null && Number.isFinite(row.reading)) return row;
-      const calculated = readings.get(index);
-      return calculated == null ? row : { ...row, reading: calculated };
-    });
+    return output;
   });
 }
 
