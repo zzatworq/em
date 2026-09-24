@@ -42,6 +42,7 @@ export type GeneralSettings = {
   meter1Color: string;
   meter2Color: string;
   v1Url: string;
+  aiProvider: "gemini" | "cloudflare";
 };
 
 export type ReadingInput = {
