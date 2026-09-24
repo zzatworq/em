@@ -21,6 +21,7 @@ export const DEFAULT_GENERAL: GeneralSettings = {
   meter1Color: "#4FD1C5",
   meter2Color: "#A78BFA",
   v1Url: "",
+  aiProvider: "gemini",
 };
 
 const DEFAULT_ADJUSTMENTS: Adjustments = {
