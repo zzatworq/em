@@ -117,9 +117,9 @@ function nearestReadingId(readings: ReturnType<typeof useMonitor.getState>["read
   return best?.id ?? null;
 }
 
-function ImageThumb({ driveFileId, alt }: { driveFileId: string; alt: string }) {
-  const [src, setSrc] = useState<string | null>(null);
-  useEffect(() => { void loadDriveImage({ data: { id: driveFileId } }).then((x) => setSrc(`data:${x.mimeType};base64,${x.base64}`)).catch(() => setSrc(null)); }, [driveFileId]);
+function ImageThumb({ driveFileId, imageBase64, alt }: { driveFileId?: string | null; imageBase64?: string; alt: string }) {
+  const [src, setSrc] = useState<string | null>(imageBase64 ? `data:image/jpeg;base64,${imageBase64}` : null);
+  useEffect(() => { if (imageBase64) { setSrc(`data:image/jpeg;base64,${imageBase64}`); return; } if (!driveFileId) { setSrc(null); return; } void loadDriveImage({ data: { id: driveFileId } }).then((x) => setSrc(`data:${x.mimeType};base64,${x.base64}`)).catch(() => setSrc(null)); }, [driveFileId, imageBase64]);
   return src ? <img src={src} alt={alt} className="h-20 w-20 rounded-lg object-cover bg-background" /> : <div className="h-20 w-20 rounded-lg bg-background" />;
 }
 
@@ -285,7 +285,7 @@ function ImageManager({ reading, onClose }: { reading: ReturnType<typeof useMoni
   async function attach(image: MeterImage, meter: MeterKey) { await attachMeterImage({ data: { id: image.id, meter, readingId: reading.id, status: "attached" } }); await refresh(); setStorageOpen(false); }
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"><div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-elevated p-5 shadow-border">
     <div className="flex items-center justify-between"><div><h2 className="font-display text-2xl font-medium">Reading images</h2><p className="text-sm text-muted">{new Date(reading.datetime).toLocaleString()}</p></div><Button variant="ghost" size="sm" onClick={onClose}>Close</Button></div>
-    <div className="mt-4 grid gap-3 sm:grid-cols-2">{attached.map((image) => <div key={image.id} className="flex items-center gap-3 rounded-xl border border-border p-3"><ImageThumb driveFileId={image.driveFileId!} alt={image.id} /><div className="min-w-0 flex-1"><p className="truncate text-sm">{new Date(image.imageCreatedAt ?? image.createdAt).toLocaleString()}</p><div className="mt-2 flex gap-2"><Button size="sm" variant="outline" onClick={() => void remove(image)}>Remove</Button><Button size="sm" variant="ghost" onClick={() => void discard(image)}>Discard</Button></div></div></div>)}</div>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2">{attached.map((image) => <div key={image.id} className="flex items-center gap-3 rounded-xl border border-border p-3"><ImageThumb driveFileId={image.driveFileId} imageBase64={image.imageBase64} alt={image.id} /><div className="min-w-0 flex-1"><p className="truncate text-sm">{new Date(image.imageCreatedAt ?? image.createdAt).toLocaleString()}</p><div className="mt-2 flex gap-2"><Button size="sm" variant="outline" onClick={() => void remove(image)}>Remove</Button><Button size="sm" variant="ghost" onClick={() => void discard(image)}>Discard</Button></div></div></div>)}</div>
     <Button className="mt-4" variant="outline" onClick={() => setStorageOpen((v) => !v)}>+ Add from image storage</Button>
     {storageOpen && <div className="mt-3 rounded-xl border border-border p-3"><p className="mb-2 text-sm font-medium">Unrelated / unattached images</p>{available.length ? <div className="grid gap-2 sm:grid-cols-2">{available.map((image) => <div key={image.id} className="flex items-center gap-3 rounded-lg border border-border p-2"><ImageThumb driveFileId={image.driveFileId!} alt={image.id} /><span className="min-w-0 flex-1 text-xs">{new Date(image.imageCreatedAt ?? image.createdAt).toLocaleString()}</span><div className="flex gap-1"><Button size="sm" variant="outline" onClick={() => void attach(image, "m1")}>M1</Button><Button size="sm" variant="outline" onClick={() => void attach(image, "m2")}>M2</Button></div></div>)}</div> : <p className="text-sm text-muted">No unattached images.</p>}</div>}
   </div></div>;
