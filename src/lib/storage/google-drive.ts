@@ -140,12 +140,20 @@ async function findNamedFolder(name: string, parentId = "root") {
 export const listRawDriveImages = createServerFn({ method: "GET" }).handler(async (): Promise<RawDriveImage[]> => {
   const folderId = await findNamedFolder("MR", "root");
   if (!folderId) throw new Error('Google Drive folder "MR" was not found in the root of Drive.');
-  const q = encodeURIComponent(`'${folderId}' in parents and trashed = false and mimeType contains 'image/'`);
-  const fields = "files(id,name,mimeType,createdTime,modifiedTime,size,webViewLink,md5Checksum,imageMediaMetadata(time))";
-  const response = await driveRequest(`/files?q=${q}&pageSize=1000&orderBy=name&fields=${encodeURIComponent(fields)}`);
-  if (!response.ok) throw new Error(`Google Drive MR image list failed (${response.status}).`);
-  const body = await response.json() as { files?: Array<DriveImage & { md5Checksum?: string; imageMediaMetadata?: { time?: string } }> };
-  return (body.files ?? []).map((file) => ({ ...file, imageTime: file.imageMediaMetadata?.time ?? null }));
+  const q = `'${folderId}' in parents and trashed = false and mimeType contains 'image/'`;
+  const fields = "nextPageToken,files(id,name,mimeType,createdTime,modifiedTime,size,webViewLink,md5Checksum,imageMediaMetadata(time))";
+  const files: Array<DriveImage & { md5Checksum?: string; imageMediaMetadata?: { time?: string } }> = [];
+  let pageToken: string | null = null;
+  do {
+    const params = new URLSearchParams({ q, pageSize: "1000", orderBy: "name", fields });
+    if (pageToken) params.set("pageToken", pageToken);
+    const response = await driveRequest(`/files?${params.toString()}`);
+    if (!response.ok) throw new Error(`Google Drive MR image list failed (${response.status}).`);
+    const body = await response.json() as { files?: Array<DriveImage & { md5Checksum?: string; imageMediaMetadata?: { time?: string } }>; nextPageToken?: string };
+    files.push(...(body.files ?? []));
+    pageToken = body.nextPageToken ?? null;
+  } while (pageToken);
+  return files.map((file) => ({ ...file, imageTime: file.imageMediaMetadata?.time ?? null }));
 });
 
 export const copyDriveImage = createServerFn({ method: "POST" })
