@@ -36,20 +36,23 @@ function organizedName(file: RawDriveImage, timestamp: number, meter: Meter | nu
 }
 
 export type RawImportResult = {
-  total: number; processed: number; attached: number; review: number; failed: number;
+  total: number; processed: number; attached: number; review: number; failed: number; nextStart: number; complete: boolean;
   items: Array<{ sourceId: string; sourceName: string; driveFileId?: string; readingId?: string | null; meter?: Meter | null; confidence?: string; reason?: string; error?: string }>;
 };
 
 export const processRawMRFolder = createServerFn({ method: "POST" })
-  .validator((data: { readings: Reading[]; force?: boolean }) => data)
+  .validator((data: { readings: Reading[]; force?: boolean; start?: number; batchSize?: number }) => data)
   .handler(async ({ data }): Promise<RawImportResult> => {
     const files = await listRawDriveImages();
     const folder = await driveFolderInfo();
     const stored = await listMeterImages();
     const done = new Set(stored.map((x) => x.id));
-    const result: RawImportResult = { total: files.length, processed: 0, attached: 0, review: 0, failed: 0, items: [] };
+    const start = Math.max(0, data.start ?? 0);
+    const batchSize = Math.max(1, Math.min(50, data.batchSize ?? 25));
+    const batch = files.slice(start, start + batchSize);
+    const result: RawImportResult = { total: files.length, processed: 0, attached: 0, review: 0, failed: 0, nextStart: start + batch.length, complete: start + batch.length >= files.length, items: [] };
 
-    for (const file of files) {
+    for (const file of batch) {
       const id = `raw-${file.id}`;
       if (!data.force && done.has(id)) continue;
       try {
