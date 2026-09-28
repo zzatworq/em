@@ -30,7 +30,7 @@ function ImageBankPanel({ readings }: { readings: ReadingInput[] }) {
   async function associate(image: MeterImageReference, readingId: string | null) {
     setBusy(true); setError("");
     try {
-      await associateMeterImage({ data: { id: image.id, readingId, meter: image.meter === "unknown" ? "m1" : image.meter } });
+      await associateMeterImage({ data: { id: image.id, readingId, meter: image.meter } });
       await refresh();
     } catch (e) { setError(e instanceof Error ? e.message : "Could not associate image."); }
     finally { setBusy(false); }
@@ -60,7 +60,7 @@ function ImageBankPanel({ readings }: { readings: ReadingInput[] }) {
           <img src={image.driveFileId ? "/api/drive/image?fileId=" + encodeURIComponent(image.driveFileId ?? "") : ""} alt="" className="h-20 w-full rounded-md bg-background object-contain" />
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{image.filename ?? image.id}</p>
-            <p className="mt-1 text-xs text-muted">{image.captureDatetime ? new Date(image.captureDatetime).toLocaleString("en-GB") : "No timestamp"} · {image.meter === "unknown" ? "Meter not assigned" : image.meter === "m1" ? "Meter 1" : "Meter 2"}</p>
+            <p className="mt-1 text-xs text-muted">{image.captureDatetime ? new Date(image.captureDatetime).toLocaleString("en-GB") : "No timestamp"} · {image.meterAssigned ? (image.meter === "m1" ? "Meter 1" : "Meter 2") : "Meter not assigned"}</p>
             <select className="mt-2 h-9 w-full rounded-md border border-border bg-background px-2 text-sm" value={selectedReading[image.id] ?? image.readingId ?? ""} onChange={(e) => setSelectedReading((s) => ({ ...s, [image.id]: e.target.value }))}>
               <option value="">Choose a reading…</option>
               {[...readings].sort((a,b) => Math.abs((image.captureDatetime ?? 0) - a.datetime) - Math.abs((image.captureDatetime ?? 0) - b.datetime)).slice(0, 12).map((r) => <option key={r.id} value={r.id}>{new Date(r.datetime).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</option>)}
