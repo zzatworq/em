@@ -2,8 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { env } from "cloudflare:workers";
 import { uploadReadingImage } from "@/lib/storage/google-drive";
 
-type Meter = "m1" | "m2" | "unknown";
-type UploadMeter = "m1" | "m2";
+type Meter = "m1" | "m2";
+type StoredMeter = "m1" | "m2" | "unknown";
 
 type MonitorBinding = {
   idFromName(name: string): { readonly name?: string };
@@ -19,6 +19,7 @@ function monitorStore() {
 export type MeterImageReference = {
   id: string;
   meter: Meter;
+  meterAssigned: boolean;
   readingId: string | null;
   value: number | null;
   identity: string | null;
@@ -34,7 +35,7 @@ export type MeterImageReference = {
 export const saveMeterImage = createServerFn({ method: "POST" })
   .validator((data: {
     id: string;
-    meter: UploadMeter;
+    meter: Meter;
     readingId: string;
     value?: number | null;
     identity?: string | null;
@@ -75,8 +76,8 @@ export const loadMeterImageReferences = createServerFn({ method: "GET" })
   .handler(async (): Promise<MeterImageReference[]> => {
     const response = await monitorStore().fetch("https://monitor-state/images/references?limit=10000");
     if (!response.ok) throw new Error(`Meter image references failed (${response.status})`);
-    const body = await response.json() as { images?: MeterImageReference[] };
-    return Array.isArray(body.images) ? body.images : [];
+    const body = await response.json() as { images?: Array<MeterImageReference & { meter: StoredMeter }> };
+    return Array.isArray(body.images) ? body.images.map((image) => ({ ...image, meter: image.meter === "m2" ? "m2" : "m1", meterAssigned: image.meter !== "unknown" })) : [];
   });
 
 export const associateMeterImage = createServerFn({ method: "POST" })
