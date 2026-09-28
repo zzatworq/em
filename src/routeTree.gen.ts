@@ -227,7 +227,8 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/drive/callback'
       preLoaderRoute: typeof ApiDriveCallbackRouteImport
       parentRoute: typeof rootRouteImport
-    }    '/api/drive/image': {
+    }
+    '/api/drive/image': {
       id: '/api/drive/image'
       path: '/api/drive/image'
       fullPath: '/api/drive/image'
