@@ -219,6 +219,7 @@ export type DriveImageFile = {
   modifiedTime: string | null;
   parents: string[];
   webViewLink: string | null;
+  folderPath: string[];
 };
 
 async function listDriveChildren(parentId: string) {
@@ -273,7 +274,7 @@ export async function listImageBank(): Promise<DriveImageFile[]> {
         continue;
       }
       if (!file.mimeType.startsWith("image/")) continue;
-      result.push(file);
+      result.push({ ...file, folderPath: current.path });
     }
   }
   return result;
