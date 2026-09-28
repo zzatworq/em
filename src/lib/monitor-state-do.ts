@@ -82,7 +82,7 @@ export class MonitorState extends DurableObject {
     }
 
     if (url.pathname === "/images/references" && method === "GET") {
-      const limit = Math.max(1, Math.min(1000, Number(url.searchParams.get("limit") ?? "1000")));
+      const limit = Math.max(1, Math.min(10000, Number(url.searchParams.get("limit") ?? "10000")));
       const rows = this.ctx.storage.sql
         .exec(
           `SELECT id, meter, reading_id AS readingId, value, identity,
