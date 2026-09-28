@@ -103,7 +103,7 @@ export const scanMeterImageBank = createServerFn({ method: "POST" })
 
     for (const file of files) {
       const captureDatetime = timestampFromName(file.name) ?? (file.createdTime ? Date.parse(file.createdTime) : null);
-      const meter = meterFromPath(file.folderPath);
+      const meter = meterFromPath(file.folderPath ?? []);
       const candidate = captureDatetime == null ? null : nearestReading(readings, captureDatetime);
       const canMatch = Boolean(candidate && meter !== "unknown");
       const status = canMatch ? "matched" : candidate ? "review" : "unmatched";
