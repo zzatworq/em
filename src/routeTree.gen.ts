@@ -20,6 +20,7 @@ import { Route as RefRouteImport } from './routes/_app/ref'
 import { Route as HealthCheckRouteImport } from './routes/health-check'
 import { Route as ApiDriveConnectRouteImport } from './routes/api/drive/connect'
 import { Route as ApiDriveCallbackRouteImport } from './routes/api/drive/callback'
+import { Route as ApiDriveImageRouteImport } from './routes/api/drive/image'
 
 const _appRoute = _appRouteImport.update({
   id: '/_app',
@@ -75,6 +76,11 @@ const ApiDriveCallbackRoute = ApiDriveCallbackRouteImport.update({
   path: '/api/drive/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDriveImageRoute = ApiDriveImageRouteImport.update({
+  id: '/api/drive/image',
+  path: '/api/drive/image',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 const _appRouteChildren = {
   _appIndexRoute: _appIndexRoute,
@@ -97,6 +103,7 @@ export interface FileRoutesByFullPath {
   '/health-check': typeof HealthCheckRoute
   '/api/drive/connect': typeof ApiDriveConnectRoute
   '/api/drive/callback': typeof ApiDriveCallbackRoute
+  '/api/drive/image': typeof ApiDriveImageRoute
 }
 export interface FileRoutesByTo {
   '/': typeof _appIndexRoute
@@ -109,6 +116,7 @@ export interface FileRoutesByTo {
   '/health-check': typeof HealthCheckRoute
   '/api/drive/connect': typeof ApiDriveConnectRoute
   '/api/drive/callback': typeof ApiDriveCallbackRoute
+  '/api/drive/image': typeof ApiDriveImageRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -123,13 +131,14 @@ export interface FileRoutesById {
   '/health-check': typeof HealthCheckRoute
   '/api/drive/connect': typeof ApiDriveConnectRoute
   '/api/drive/callback': typeof ApiDriveCallbackRoute
+  '/api/drive/image': typeof ApiDriveImageRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/bill' | '/history' | '/notes' | '/settings' | '/readings' | '/ref' | '/health-check' | '/api/drive/connect' | '/api/drive/callback'
+  fullPaths: '/' | '/bill' | '/history' | '/notes' | '/settings' | '/readings' | '/ref' | '/health-check' | '/api/drive/connect' | '/api/drive/callback' | '/api/drive/image'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/bill' | '/history' | '/notes' | '/settings' | '/readings' | '/ref' | '/health-check' | '/api/drive/connect' | '/api/drive/callback'
-  id: '__root__' | '/_app' | '/_app/' | '/_app/bill' | '/_app/history' | '/_app/notes' | '/_app/settings' | '/_app/readings' | '/_app/ref' | '/health-check' | '/api/drive/connect' | '/api/drive/callback'
+  to: '/' | '/bill' | '/history' | '/notes' | '/settings' | '/readings' | '/ref' | '/health-check' | '/api/drive/connect' | '/api/drive/callback' | '/api/drive/image'
+  id: '__root__' | '/_app' | '/_app/' | '/_app/bill' | '/_app/history' | '/_app/notes' | '/_app/settings' | '/_app/readings' | '/_app/ref' | '/health-check' | '/api/drive/connect' | '/api/drive/callback' | '/api/drive/image'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -137,6 +146,7 @@ export interface RootRouteChildren {
   HealthCheckRoute: typeof HealthCheckRoute
   ApiDriveConnectRoute: typeof ApiDriveConnectRoute
   ApiDriveCallbackRoute: typeof ApiDriveCallbackRoute
+  ApiDriveImageRoute: typeof ApiDriveImageRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -218,6 +228,14 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDriveCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/drive/image': {
+      id: '/api/drive/image'
+      path: '/api/drive/image'
+      fullPath: '/api/drive/image'
+      preLoaderRoute: typeof ApiDriveImageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+
   }
 }
 
@@ -226,6 +244,7 @@ const rootRouteChildren: RootRouteChildren = {
   HealthCheckRoute: HealthCheckRoute,
   ApiDriveConnectRoute: ApiDriveConnectRoute,
   ApiDriveCallbackRoute: ApiDriveCallbackRoute,
+  ApiDriveImageRoute: ApiDriveImageRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { uploadReadingImage } from "@/lib/storage/google-drive";
 
 type Meter = "m1" | "m2";
+type StoredMeter = "m1" | "m2" | "unknown";
 
 type MonitorBinding = {
   idFromName(name: string): { readonly name?: string };
@@ -18,12 +19,17 @@ function monitorStore() {
 export type MeterImageReference = {
   id: string;
   meter: Meter;
+  meterAssigned: boolean;
   readingId: string | null;
   value: number | null;
   identity: string | null;
   imageBase64: string;
   driveFileId: string | null;
   driveUrl: string | null;
+  filename?: string | null;
+  captureDatetime?: number | null;
+  mimeType?: string | null;
+  matchStatus?: "matched" | "unmatched" | "review";
 };
 
 export const saveMeterImage = createServerFn({ method: "POST" })
@@ -56,6 +62,10 @@ export const saveMeterImage = createServerFn({ method: "POST" })
         identity: data.identity ?? null,
         driveFileId: drive.fileId,
         driveUrl: drive.url,
+        filename: drive.name,
+        captureDatetime: Date.now(),
+        mimeType: data.mimeType ?? "image/jpeg",
+        matchStatus: "matched",
       }),
     });
     if (!response.ok) throw new Error(`Reading image metadata save failed (${response.status})`);
@@ -64,10 +74,22 @@ export const saveMeterImage = createServerFn({ method: "POST" })
 
 export const loadMeterImageReferences = createServerFn({ method: "GET" })
   .handler(async (): Promise<MeterImageReference[]> => {
-    const response = await monitorStore().fetch("https://monitor-state/images/references?limit=1000");
+    const response = await monitorStore().fetch("https://monitor-state/images/references?limit=10000");
     if (!response.ok) throw new Error(`Meter image references failed (${response.status})`);
-    const body = await response.json() as { images?: MeterImageReference[] };
-    return Array.isArray(body.images) ? body.images : [];
+    const body = await response.json() as { images?: Array<Omit<MeterImageReference, "meter" | "meterAssigned"> & { meter: StoredMeter }> };
+    return Array.isArray(body.images) ? body.images.map((image) => ({ ...image, meter: image.meter === "m2" ? "m2" : "m1", meterAssigned: image.meter !== "unknown" })) : [];
+  });
+
+export const associateMeterImage = createServerFn({ method: "POST" })
+  .validator((data: { id: string; readingId?: string | null; meter?: Meter }) => data)
+  .handler(async ({ data }) => {
+    const response = await monitorStore().fetch("https://monitor-state/images/associate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...data, status: data.readingId ? "matched" : "unmatched" }),
+    });
+    if (!response.ok) throw new Error("Image association failed (" + response.status + ")");
+    return { ok: true };
   });
 
 export const loadMeterIdentities = createServerFn({ method: "GET" })
