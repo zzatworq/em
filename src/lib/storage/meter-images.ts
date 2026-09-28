@@ -24,6 +24,10 @@ export type MeterImageReference = {
   imageBase64: string;
   driveFileId: string | null;
   driveUrl: string | null;
+  filename?: string | null;
+  captureDatetime?: number | null;
+  mimeType?: string | null;
+  matchStatus?: "matched" | "unmatched" | "review";
 };
 
 export const saveMeterImage = createServerFn({ method: "POST" })
@@ -56,6 +60,10 @@ export const saveMeterImage = createServerFn({ method: "POST" })
         identity: data.identity ?? null,
         driveFileId: drive.fileId,
         driveUrl: drive.url,
+        filename: drive.name,
+        captureDatetime: Date.now(),
+        mimeType: data.mimeType ?? "image/jpeg",
+        matchStatus: "matched",
       }),
     });
     if (!response.ok) throw new Error(`Reading image metadata save failed (${response.status})`);
@@ -68,6 +76,18 @@ export const loadMeterImageReferences = createServerFn({ method: "GET" })
     if (!response.ok) throw new Error(`Meter image references failed (${response.status})`);
     const body = await response.json() as { images?: MeterImageReference[] };
     return Array.isArray(body.images) ? body.images : [];
+  });
+
+export const associateMeterImage = createServerFn({ method: "POST" })
+  .validator((data: { id: string; readingId?: string | null; meter?: Meter }) => data)
+  .handler(async ({ data }) => {
+    const response = await monitorStore().fetch("https://monitor-state/images/associate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...data, status: data.readingId ? "matched" : "unmatched" }),
+    });
+    if (!response.ok) throw new Error("Image association failed (" + response.status + ")");
+    return { ok: true };
   });
 
 export const loadMeterIdentities = createServerFn({ method: "GET" })
