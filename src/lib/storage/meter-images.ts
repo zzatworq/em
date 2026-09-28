@@ -76,7 +76,7 @@ export const loadMeterImageReferences = createServerFn({ method: "GET" })
   .handler(async (): Promise<MeterImageReference[]> => {
     const response = await monitorStore().fetch("https://monitor-state/images/references?limit=10000");
     if (!response.ok) throw new Error(`Meter image references failed (${response.status})`);
-    const body = await response.json() as { images?: Array<MeterImageReference & { meter: StoredMeter }> };
+    const body = await response.json() as { images?: Array<Omit<MeterImageReference, "meter" | "meterAssigned"> & { meter: StoredMeter }> };
     return Array.isArray(body.images) ? body.images.map((image) => ({ ...image, meter: image.meter === "m2" ? "m2" : "m1", meterAssigned: image.meter !== "unknown" })) : [];
   });
 
