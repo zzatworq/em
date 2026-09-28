@@ -135,7 +135,7 @@ async function driveUploadRequest(path: string, init: RequestInit = {}) {
 }
 
 async function findOrCreateFolder(name: string, parentId: string): Promise<string> {
-  const escaped = name.replace(/'/g, "\'");
+  const escaped = name.replace(/'/g, "\\'");
   const q = encodeURIComponent("'"+parentId+"' in parents and name = '"+escaped+"' and mimeType = 'application/vnd.google-apps.folder' and trashed = false");
   const list = await driveRequest("files?q=" + q + "&pageSize=10&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true");
   const body = await list.json() as { files?: Array<{ id?: string }> };
@@ -207,5 +207,87 @@ export async function uploadReadingImage(data: {
     name: file.name ?? name,
     url: file.webViewLink ?? "https://drive.google.com/file/d/" + file.id + "/view",
     downloadUrl: file.webContentLink ?? null,
+  };
+}
+
+
+export type DriveImageFile = {
+  fileId: string;
+  name: string;
+  mimeType: string;
+  createdTime: string | null;
+  modifiedTime: string | null;
+  parents: string[];
+  webViewLink: string | null;
+};
+
+async function listDriveChildren(parentId: string) {
+  const files: Array<DriveImageFile> = [];
+  let pageToken = "";
+  do {
+    const params = new URLSearchParams({
+      q: "'" + parentId + "' in parents and trashed = false",
+      pageSize: "1000",
+      fields: "nextPageToken,files(id,name,mimeType,createdTime,modifiedTime,parents,webViewLink)",
+      orderBy: "name",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const response = await driveRequest("files?" + params.toString());
+    const body = await response.json() as {
+      files?: Array<{
+        id?: string; name?: string; mimeType?: string; createdTime?: string;
+        modifiedTime?: string; parents?: string[]; webViewLink?: string;
+      }>;
+      nextPageToken?: string;
+    };
+    if (!response.ok) throw new Error("Google Drive image-bank listing failed (" + response.status + ").");
+    for (const file of body.files ?? []) {
+      if (!file.id || !file.name || !file.mimeType) continue;
+      files.push({
+        fileId: file.id,
+        name: file.name,
+        mimeType: file.mimeType,
+        createdTime: file.createdTime ?? null,
+        modifiedTime: file.modifiedTime ?? null,
+        parents: file.parents ?? [],
+        webViewLink: file.webViewLink ?? null,
+      });
+    }
+    pageToken = body.nextPageToken ?? "";
+  } while (pageToken);
+  return files;
+}
+
+export async function listImageBank(): Promise<DriveImageFile[]> {
+  const bank = await findOrCreateFolder("Image Bank", DRIVE_ROOT_ID);
+  const result: DriveImageFile[] = [];
+  const queue: Array<{ id: string; path: string[] }> = [{ id: bank, path: [] }];
+  while (queue.length) {
+    const current = queue.shift()!;
+    const children = await listDriveChildren(current.id);
+    for (const file of children) {
+      if (file.mimeType === "application/vnd.google-apps.folder") {
+        if (current.path.length < 3) queue.push({ id: file.fileId, path: [...current.path, file.name] });
+        continue;
+      }
+      if (!file.mimeType.startsWith("image/")) continue;
+      result.push(file);
+    }
+  }
+  return result;
+}
+
+export async function getDriveImage(fileId: string): Promise<{ body: ReadableStream<Uint8Array> | null; contentType: string; contentLength: string | null }> {
+  if (!/^[a-zA-Z0-9_-]{5,}$/.test(fileId)) throw new Error("Invalid Drive file id.");
+  const response = await driveRequest("files/" + encodeURIComponent(fileId) + "?alt=media&supportsAllDrives=true", {
+    headers: { Accept: "*/*" },
+  });
+  if (!response.ok || !response.body) throw new Error("Google Drive image fetch failed (" + response.status + ").");
+  return {
+    body: response.body,
+    contentType: response.headers.get("content-type") ?? "application/octet-stream",
+    contentLength: response.headers.get("content-length"),
   };
 }
