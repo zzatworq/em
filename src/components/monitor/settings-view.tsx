@@ -57,7 +57,7 @@ function ImageBankPanel({ readings }: { readings: ReadingInput[] }) {
       <div className="flex items-center justify-between gap-3"><h3 className="font-medium">Needs review</h3><span className="text-xs text-muted">{review.length} images</span></div>
       <div className="mt-3 space-y-3">
         {review.slice(0, 30).map((image) => <div key={image.id} className="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-[6rem_minmax(0,1fr)_auto] sm:items-center">
-          <img src={image.driveFileId ? "/api/drive/image/" + encodeURIComponent(image.driveFileId) : ""} alt="" className="h-20 w-full rounded-md bg-background object-contain" />
+          <img src={image.driveFileId ? "/api/drive/image?fileId=" + encodeURIComponent(image.driveFileId ?? "") : ""} alt="" className="h-20 w-full rounded-md bg-background object-contain" />
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{image.filename ?? image.id}</p>
             <p className="mt-1 text-xs text-muted">{image.captureDatetime ? new Date(image.captureDatetime).toLocaleString("en-GB") : "No timestamp"} · {image.meter === "unknown" ? "Meter not assigned" : image.meter === "m1" ? "Meter 1" : "Meter 2"}</p>
