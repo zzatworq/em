@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { uploadReadingImage } from "@/lib/storage/google-drive";
 
 type Meter = "m1" | "m2" | "unknown";
+type UploadMeter = "m1" | "m2";
 
 type MonitorBinding = {
   idFromName(name: string): { readonly name?: string };
@@ -33,7 +34,7 @@ export type MeterImageReference = {
 export const saveMeterImage = createServerFn({ method: "POST" })
   .validator((data: {
     id: string;
-    meter: Meter;
+    meter: UploadMeter;
     readingId: string;
     value?: number | null;
     identity?: string | null;
