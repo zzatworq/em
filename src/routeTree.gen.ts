@@ -137,8 +137,8 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths: '/' | '/bill' | '/history' | '/notes' | '/settings' | '/readings' | '/ref' | '/health-check' | '/api/drive/connect' | '/api/drive/callback' | '/api/drive/image'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/bill' | '/history' | '/notes' | '/settings' | '/readings' | '/ref' | '/health-check' | '/api/drive/connect' | '/api/drive/callback'
-  id: '__root__' | '/_app' | '/_app/' | '/_app/bill' | '/_app/history' | '/_app/notes' | '/_app/settings' | '/_app/readings' | '/_app/ref' | '/health-check' | '/api/drive/connect' | '/api/drive/callback'
+  to: '/' | '/bill' | '/history' | '/notes' | '/settings' | '/readings' | '/ref' | '/health-check' | '/api/drive/connect' | '/api/drive/callback' | '/api/drive/image'
+  id: '__root__' | '/_app' | '/_app/' | '/_app/bill' | '/_app/history' | '/_app/notes' | '/_app/settings' | '/_app/readings' | '/_app/ref' | '/health-check' | '/api/drive/connect' | '/api/drive/callback' | '/api/drive/image'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
