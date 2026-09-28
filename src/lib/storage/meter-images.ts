@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { env } from "cloudflare:workers";
 import { uploadReadingImage } from "@/lib/storage/google-drive";
 
-type Meter = "m1" | "m2";
+type Meter = "m1" | "m2" | "unknown";
 
 type MonitorBinding = {
   idFromName(name: string): { readonly name?: string };
