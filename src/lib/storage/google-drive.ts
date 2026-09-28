@@ -219,7 +219,7 @@ export type DriveImageFile = {
   modifiedTime: string | null;
   parents: string[];
   webViewLink: string | null;
-  folderPath: string[];
+  folderPath?: string[];
 };
 
 async function listDriveChildren(parentId: string) {
