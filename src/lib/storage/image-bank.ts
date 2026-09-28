@@ -17,7 +17,7 @@ function monitorStore() {
 }
 
 function timestampFromName(name: string): number | null {
-  const match = name.match(/(?:^|[^0-9])(20\\d{2})(\\d{2})(\\d{2})(?:[_-]?(\\d{2})(\\d{2})(\\d{2}))?/);
+  const match = name.match(/(?:^|[^0-9])(20\d{2})(\d{2})(\d{2})(?:[_-]?(\d{2})(\d{2})(\d{2}))?/);
   if (!match) return null;
   const year = Number(match[1]);
   const month = Number(match[2]);
@@ -32,8 +32,8 @@ function timestampFromName(name: string): number | null {
 
 function meterFromPath(path: string[]): Meter {
   const value = path.join("/").toLowerCase();
-  if (/meter[ _-]*1\\b/.test(value)) return "m1";
-  if (/meter[ _-]*2\\b/.test(value)) return "m2";
+  if (/meter[ _-]*1\b/.test(value)) return "m1";
+  if (/meter[ _-]*2\b/.test(value)) return "m2";
   return "unknown";
 }
 
