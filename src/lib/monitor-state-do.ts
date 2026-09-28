@@ -10,9 +10,13 @@ export class MonitorState extends DurableObject {
         reading_id TEXT,
         value REAL,
         identity TEXT,
-        image_base64 TEXT NOT NULL,
+        image_base64 TEXT NOT NULL DEFAULT '',
         drive_file_id TEXT,
         drive_url TEXT,
+        filename TEXT,
+        capture_datetime INTEGER,
+        mime_type TEXT,
+        match_status TEXT NOT NULL DEFAULT 'unmatched',
         created_at INTEGER NOT NULL
       )
     `);
@@ -21,6 +25,12 @@ export class MonitorState extends DurableObject {
     );
     try { this.ctx.storage.sql.exec("ALTER TABLE meter_images ADD COLUMN drive_file_id TEXT"); } catch {}
     try { this.ctx.storage.sql.exec("ALTER TABLE meter_images ADD COLUMN drive_url TEXT"); } catch {}
+    try { this.ctx.storage.sql.exec("ALTER TABLE meter_images ADD COLUMN filename TEXT"); } catch {}
+    try { this.ctx.storage.sql.exec("ALTER TABLE meter_images ADD COLUMN capture_datetime INTEGER"); } catch {}
+    try { this.ctx.storage.sql.exec("ALTER TABLE meter_images ADD COLUMN mime_type TEXT"); } catch {}
+    try { this.ctx.storage.sql.exec("ALTER TABLE meter_images ADD COLUMN match_status TEXT NOT NULL DEFAULT 'unmatched'"); } catch {}
+    this.ctx.storage.sql.exec("CREATE INDEX IF NOT EXISTS idx_meter_images_reading ON meter_images(reading_id)");
+    this.ctx.storage.sql.exec("CREATE INDEX IF NOT EXISTS idx_meter_images_capture ON meter_images(capture_datetime)");
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -37,6 +47,10 @@ export class MonitorState extends DurableObject {
         imageBase64?: string;
         driveFileId?: string;
         driveUrl?: string;
+        filename?: string;
+        captureDatetime?: number | null;
+        mimeType?: string | null;
+        matchStatus?: string;
       };
 
       if (!/^[-_a-zA-Z0-9]{1,100}$/.test(body.id) || (body.meter !== "m1" && body.meter !== "m2")) {
@@ -48,8 +62,8 @@ export class MonitorState extends DurableObject {
 
       this.ctx.storage.sql.exec(
         `INSERT OR REPLACE INTO meter_images
-          (id, meter, reading_id, value, identity, image_base64, drive_file_id, drive_url, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, meter, reading_id, value, identity, image_base64, drive_file_id, drive_url, filename, capture_datetime, mime_type, match_status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         body.id,
         body.meter,
         body.readingId ?? null,
@@ -58,15 +72,11 @@ export class MonitorState extends DurableObject {
         body.imageBase64 ?? "",
         body.driveFileId,
         body.driveUrl,
+        body.filename ?? null,
+        body.captureDatetime ?? null,
+        body.mimeType ?? null,
+        body.matchStatus ?? "matched",
         Date.now(),
-      );
-      this.ctx.storage.sql.exec(
-        `DELETE FROM meter_images
-         WHERE id IN (
-           SELECT id FROM meter_images
-           ORDER BY created_at DESC
-           LIMIT -1 OFFSET 1000
-         )`,
       );
       return Response.json({ ok: true });
     }
@@ -77,7 +87,8 @@ export class MonitorState extends DurableObject {
         .exec(
           `SELECT id, meter, reading_id AS readingId, value, identity,
                   image_base64 AS imageBase64, drive_file_id AS driveFileId,
-                  drive_url AS driveUrl
+                  drive_url AS driveUrl, filename, capture_datetime AS captureDatetime,
+                  mime_type AS mimeType, match_status AS matchStatus
            FROM meter_images
            ORDER BY created_at DESC
            LIMIT ?`,
@@ -85,6 +96,19 @@ export class MonitorState extends DurableObject {
         )
         .toArray();
       return Response.json({ images: rows });
+    }
+
+    if (url.pathname === "/images/associate" && method === "POST") {
+      const body = await request.json() as { id?: string; readingId?: string | null; meter?: "m1" | "m2"; status?: string };
+      if (!body.id) return new Response("Image id is required", { status: 400 });
+      this.ctx.storage.sql.exec(
+        "UPDATE meter_images SET reading_id = ?, meter = COALESCE(?, meter), match_status = ? WHERE id = ?",
+        body.readingId ?? null,
+        body.meter ?? null,
+        body.status ?? (body.readingId ? "matched" : "unmatched"),
+        body.id,
+      );
+      return Response.json({ ok: true });
     }
 
     if (url.pathname === "/images/identities" && method === "GET") {
