@@ -40,7 +40,7 @@ export class MonitorState extends DurableObject {
     if (url.pathname === "/images/save" && method === "POST") {
       const body = await request.json() as {
         id: string;
-        meter: "m1" | "m2";
+        meter: "m1" | "m2" | "unknown";
         readingId?: string;
         value?: number | null;
         identity?: string | null;
@@ -53,7 +53,7 @@ export class MonitorState extends DurableObject {
         matchStatus?: string;
       };
 
-      if (!/^[-_a-zA-Z0-9]{1,100}$/.test(body.id) || (body.meter !== "m1" && body.meter !== "m2")) {
+      if (!/^[-_a-zA-Z0-9]{1,100}$/.test(body.id) || (body.meter !== "m1" && body.meter !== "m2" && body.meter !== "unknown")) {
         return new Response("Invalid image metadata", { status: 400 });
       }
       if (!body.driveFileId || !body.driveUrl) {
