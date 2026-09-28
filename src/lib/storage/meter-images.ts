@@ -73,7 +73,7 @@ export const saveMeterImage = createServerFn({ method: "POST" })
 
 export const loadMeterImageReferences = createServerFn({ method: "GET" })
   .handler(async (): Promise<MeterImageReference[]> => {
-    const response = await monitorStore().fetch("https://monitor-state/images/references?limit=1000");
+    const response = await monitorStore().fetch("https://monitor-state/images/references?limit=10000");
     if (!response.ok) throw new Error(`Meter image references failed (${response.status})`);
     const body = await response.json() as { images?: MeterImageReference[] };
     return Array.isArray(body.images) ? body.images : [];
