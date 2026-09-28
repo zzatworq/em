@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { units } from "@/lib/engine/time";
 import { extractMeterReading, type MeterReadingResult } from "@/lib/meter-vision";
-import { loadMeterIdentities, loadMeterImageReferences, saveMeterImage } from "@/lib/storage/meter-images";
+import { loadMeterIdentities, loadMeterImageReferences, saveMeterImage, type MeterImageReference } from "@/lib/storage/meter-images";
 import { useMonitor } from "@/store/monitor";
 
 function clamp(n: number, min: number, max: number) { return Math.max(min, Math.min(max, n)); }
@@ -33,7 +33,68 @@ function AddReadingModal({ onClose }: { onClose: () => void }) {
 }
 
 export function ReadingsView() {
-  const readings = useMonitor((s) => s.readings); const deleteReading = useMonitor((s) => s.deleteReading); const [modalOpen, setModalOpen] = useState(false); const [imageLinks, setImageLinks] = useState<Record<string, string>>({}); const sorted = useMemo(() => [...readings].sort((a, b) => b.datetime - a.datetime), [readings]);
-  useEffect(() => { void loadMeterImageReferences().then((images) => setImageLinks(Object.fromEntries(images.filter((x) => x.readingId && x.driveUrl).map((x) => [x.readingId as string, x.driveUrl as string])))).catch(() => {}); }, []);
-  return <section className="space-y-5"><div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-display text-2xl font-medium">Readings</h2><p className="mt-1 text-sm text-muted">Take a meter photo, confirm the detected reading, and add it.</p></div><Button onClick={() => setModalOpen(true)}>Add reading</Button></div></div>{modalOpen && <AddReadingModal onClose={() => setModalOpen(false)} />}<div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6"><div className="flex items-center justify-between"><h3 className="font-display text-xl font-medium">Recent readings</h3><span className="text-sm text-muted">{readings.length} total</span></div><div className="mt-5 overflow-x-auto"><table className="w-full min-w-[40rem] text-sm"><thead><tr className="text-left text-xs uppercase tracking-wider text-muted"><th className="pb-2 font-medium">When</th><th className="pb-2 text-right font-medium text-meter1">Meter 1</th><th className="pb-2 text-right font-medium text-meter2">Meter 2</th><th className="pb-2 font-medium"></th></tr></thead><tbody>{sorted.map((r) => <tr key={r.id} className="border-t border-border"><td className="py-2.5">{imageLinks[r.id] ? <a href={imageLinks[r.id]} target="_blank" rel="noreferrer" className="underline decoration-muted underline-offset-2">{new Date(r.datetime).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })}</a> : new Date(r.datetime).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })}</td><td className="py-2.5 text-right tabular-nums text-meter1">{units(r.newInput)}</td><td className="py-2.5 text-right tabular-nums text-meter2">{units(r.oldInput)}</td><td className="py-2.5 text-right"><Button variant="ghost" size="icon" onClick={() => deleteReading(r.id)} aria-label="Remove reading" title="Remove reading"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4"><path d="M3 6h18M9 6V4h6v2m-8 0 1 14h6l1-14M10 10v6m4-6v6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></Button></td></tr>)}</tbody></table></div></div></section>;
+  const readings = useMonitor((s) => s.readings);
+  const deleteReading = useMonitor((s) => s.deleteReading);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [images, setImages] = useState<MeterImageReference[]>([]);
+  const [viewer, setViewer] = useState<{ images: MeterImageReference[]; index: number } | null>(null);
+  const sorted = useMemo(() => [...readings].sort((a, b) => b.datetime - a.datetime), [readings]);
+
+  useEffect(() => {
+    void loadMeterImageReferences().then(setImages).catch(() => {});
+  }, []);
+
+  const imagesByReading = useMemo(() => {
+    const map: Record<string, MeterImageReference[]> = {};
+    for (const image of images) {
+      if (!image.readingId) continue;
+      (map[image.readingId] ??= []).push(image);
+    }
+    return map;
+  }, [images]);
+
+  return <section className="space-y-5">
+    <div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div><h2 className="font-display text-2xl font-medium">Readings</h2><p className="mt-1 text-sm text-muted">Take a meter photo, confirm the detected reading, and add it.</p></div>
+        <Button onClick={() => setModalOpen(true)}>Add reading</Button>
+      </div>
+    </div>
+    {modalOpen && <AddReadingModal onClose={() => setModalOpen(false)} />}
+    {viewer ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" onClick={() => setViewer(null)}>
+      <div className="relative flex max-h-[92vh] w-full max-w-4xl flex-col rounded-2xl bg-elevated p-4 shadow-border sm:p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0"><p className="font-medium">Reading image</p><p className="truncate text-xs text-muted">{viewer.images[viewer.index]?.filename ?? "Image"}</p></div>
+          <Button variant="ghost" size="sm" onClick={() => setViewer(null)}>Close</Button>
+        </div>
+        <div className="relative mt-4 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-xl bg-background p-2">
+          <img src={viewer.images[viewer.index]?.driveFileId ? "/api/drive/image/" + encodeURIComponent(viewer.images[viewer.index].driveFileId) : ""} alt={viewer.images[viewer.index]?.filename ?? "Meter reading"} className="max-h-[70vh] max-w-full rounded-lg object-contain" />
+          {viewer.images.length > 1 ? <>
+            <Button variant="outline" size="icon" className="absolute left-3 top-1/2 -translate-y-1/2" onClick={() => setViewer((v) => v ? ({ ...v, index: (v.index - 1 + v.images.length) % v.images.length }) : v)} aria-label="Previous image">‹</Button>
+            <Button variant="outline" size="icon" className="absolute right-3 top-1/2 -translate-y-1/2" onClick={() => setViewer((v) => v ? ({ ...v, index: (v.index + 1) % v.images.length }) : v)} aria-label="Next image">›</Button>
+          </> : null}
+        </div>
+        <p className="mt-3 text-center text-xs text-muted">{viewer.index + 1} / {viewer.images.length}</p>
+      </div>
+    </div> : null}
+    <div className="rounded-2xl bg-elevated p-5 shadow-border sm:p-6">
+      <div className="flex items-center justify-between"><h3 className="font-display text-xl font-medium">Recent readings</h3><span className="text-sm text-muted">{readings.length} total</span></div>
+      <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[40rem] text-sm"><thead><tr className="text-left text-xs uppercase tracking-wider text-muted"><th className="pb-2 font-medium">When</th><th className="pb-2 text-right font-medium text-meter1">Meter 1</th><th className="pb-2 text-right font-medium text-meter2">Meter 2</th><th className="pb-2 font-medium"></th></tr></thead>
+        <tbody>{sorted.map((r) => {
+          const readingImages = imagesByReading[r.id] ?? [];
+          return <tr key={r.id} className="border-t border-border">
+            <td className="py-2.5">
+              {readingImages.length ? <button type="button" className="inline-flex items-center gap-2 underline decoration-muted underline-offset-2" onClick={() => setViewer({ images: readingImages, index: 0 })}>
+                <span>{new Date(r.datetime).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })}</span>
+                <span className="rounded-full bg-background px-1.5 py-0.5 text-[10px] no-underline">{readingImages.length} {readingImages.length === 1 ? "image" : "images"}</span>
+              </button> : new Date(r.datetime).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" })}
+            </td>
+            <td className="py-2.5 text-right tabular-nums text-meter1">{units(r.newInput)}</td>
+            <td className="py-2.5 text-right tabular-nums text-meter2">{units(r.oldInput)}</td>
+            <td className="py-2.5 text-right"><Button variant="ghost" size="icon" onClick={() => deleteReading(r.id)} aria-label="Remove reading" title="Remove reading"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4"><path d="M3 6h18M9 6V4h6v2m-8 0 1 14h6l1-6M10 10v6m4-6v6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></Button></td>
+          </tr>;
+        })}</tbody>
+      </table></div>
+    </div>
+  </section>;
 }
