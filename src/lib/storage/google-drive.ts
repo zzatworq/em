@@ -31,12 +31,6 @@ export function googleDriveRedirectUri(request: Request) {
 export async function createGoogleDriveAuthorizationUrl(request: Request) {
   const { GOOGLE_CLIENT_ID } = googleConfig();
   const state = crypto.randomUUID();
-  const response = await monitorStore().fetch("https://monitor-state/google/state", {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ state, createdAt: Date.now() }),
-  });
-  if (!response.ok) throw new Error("Could not start Google Drive authorization.");
 
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.searchParams.set("client_id", GOOGLE_CLIENT_ID);
@@ -47,7 +41,10 @@ export async function createGoogleDriveAuthorizationUrl(request: Request) {
   url.searchParams.set("include_granted_scopes", "true");
   url.searchParams.set("prompt", "consent");
   url.searchParams.set("state", state);
-  return url.toString();
+  return {
+    url: url.toString(),
+    state,
+  };
 }
 
 export async function finishGoogleDriveAuthorization(request: Request) {
