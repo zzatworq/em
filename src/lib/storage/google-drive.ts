@@ -4,7 +4,7 @@ type DurableObjectId = { readonly name?: string };
 type DurableObjectStub = { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
 type MonitorBinding = { idFromName(name: string): DurableObjectId; get(id: DurableObjectId): DurableObjectStub };
 
-const DRIVE_ROOT_ID = "1u4b7Oo5VAqLqkPqU7W5sax2JMnMyJur";
+const DRIVE_ROOT_ID = "root";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
 
 function monitorStore(): DurableObjectStub {
@@ -144,8 +144,13 @@ async function findOrCreateFolder(name: string, parentId: string): Promise<strin
   return created.id;
 }
 
+async function emDataFolder(): Promise<string> {
+  return findOrCreateFolder("EM_DATA", DRIVE_ROOT_ID);
+}
+
 async function meterFolder(meter: "m1" | "m2") {
-  const root = await findOrCreateFolder("Meter Readings", DRIVE_ROOT_ID);
+  const emData = await emDataFolder();
+  const root = await findOrCreateFolder("Meter Readings", emData);
   return findOrCreateFolder(meter === "m1" ? "Meter 1" : "Meter 2", root);
 }
 
@@ -253,7 +258,8 @@ async function listDriveChildren(parentId: string) {
 }
 
 export async function listImageBank(): Promise<DriveImageFile[]> {
-  const bank = await findOrCreateFolder("Image Bank", DRIVE_ROOT_ID);
+  const emData = await emDataFolder();
+  const bank = await findOrCreateFolder("Image Bank", emData);
   const result: DriveImageFile[] = [];
   const queue: Array<{ id: string; path: string[] }> = [{ id: bank, path: [] }];
   while (queue.length) {
