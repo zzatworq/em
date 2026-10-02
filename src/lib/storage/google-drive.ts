@@ -47,19 +47,13 @@ export async function createGoogleDriveAuthorizationUrl(request: Request) {
   };
 }
 
-export async function finishGoogleDriveAuthorization(request: Request) {
+export async function finishGoogleDriveAuthorization(request: Request, expectedState: string | null) {
   const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } = googleConfig();
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   if (!code || !state) throw new Error("Google authorization response is incomplete.");
-
-  const stateResponse = await monitorStore().fetch("https://monitor-state/google/state");
-  if (!stateResponse.ok) throw new Error("Google authorization state was not found.");
-  const saved = await stateResponse.json() as { state?: string; createdAt?: number };
-  if (!saved.state || saved.state !== state || !saved.createdAt || Date.now() - saved.createdAt > 10 * 60 * 1000) {
-    throw new Error("Google authorization state is invalid or expired.");
-  }
+  if (!expectedState || state !== expectedState) throw new Error("Google authorization state is invalid or expired.");
 
   const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
